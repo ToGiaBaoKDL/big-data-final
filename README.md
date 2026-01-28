@@ -83,10 +83,10 @@ Access **Metabase**: [http://localhost:3000](http://localhost:3000)
 ## Services & Credentials
 | Service | URL | User | Password |
 |---------|-----|------|----------|
-| **Airflow** | [localhost:8080] | `admin` | `admin_password` |
-| **Metabase** | [localhost:3000] | (Setup yourself) | (Setup yourself) |
-| **MinIO** | [localhost:9001] | `minio_admin` | `minio_password` |
-| **Spark Master** | [localhost:9090] | - | - |
+| **Airflow** | `localhost:8080` | `admin` | `admin_password` |
+| **Metabase** | `localhost:3000` | (Setup yourself) | (Setup yourself) |
+| **MinIO** | `localhost:9001` | `minio_admin` | `minio_password` |
+| **Spark Master** | `localhost:9090` | - | - |
 | **ClickHouse** | `localhost:8123` | `clickhouse_admin` | `clickhouse_password` |
-| **MLflow** | [localhost:5000] | `admin` | `password`|
+| **MLflow** | `localhost:5000` | `admin` | `password`|
 | **Postgres** | `localhost:5432` | `postgres` | `postgres` (Root) |
