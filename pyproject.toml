@@ -9,13 +9,14 @@ dependencies = [
     "apache-airflow-providers-apache-spark",
     "apache-airflow-providers-amazon",
     # Data Processing
-    "pyspark==4.1.1",
+    "pyspark==3.5.1",
     "polars==1.37.1",
     "numpy==2.4.1",
     "faker==40.1.2",
     # Database
     "clickhouse-connect==0.10.0",
     "minio==7.2.20",
+    "mlflow==5.1.7",
     # dbt
     "dbt-clickhouse>=1.8.0",
     "dbt-core>=1.8.0",

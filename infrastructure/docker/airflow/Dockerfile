@@ -22,4 +22,5 @@ RUN pip install --no-cache-dir \
     faker==40.1.2 \
     dbt-clickhouse==1.9.8 \
     clickhouse-connect==0.10.0 \
-    minio==7.2.20
+    minio==7.2.20 \
+    mlflow==5.1.7
