@@ -12,7 +12,7 @@ MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minio_password")
 
 # Buckets
 BUCKET_ANALYTICS = os.getenv("MINIO_BUCKET_ANALYTICS", "dl-analytics-g4igm3")
-BUCKET_DATASCIENCE = os.getenv("MINIO_BUCKET_DATASCIENCE", "dl-datascience")
+BUCKET_DATASCIENCE = os.getenv("MINIO_BUCKET_DATASCIENCE", "dl-datascience-gii2ij")
 
 def create_spark_session():
     spark = SparkSession.builder \
