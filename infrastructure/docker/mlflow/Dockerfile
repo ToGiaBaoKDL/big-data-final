@@ -4,7 +4,7 @@ FROM python:${MLFLOW_PYTHON_TAG}
 WORKDIR /app
 
 # Arguments for MLflow version
-ARG MLFLOW_VER
+ARG MLFLOW_VER=3.8.1
 
 # Install MLflow and dependencies
 # psycopg2-binary for Postgres backend

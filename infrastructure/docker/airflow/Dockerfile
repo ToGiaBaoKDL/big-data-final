@@ -12,7 +12,7 @@ ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
 USER airflow
 
-ARG SPARK_TAG
+ARG SPARK_TAG=3.5.8
 RUN pip install --no-cache-dir \
     apache-airflow-providers-apache-spark \
     apache-airflow-providers-amazon \
