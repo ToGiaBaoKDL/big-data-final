@@ -5,7 +5,7 @@ services:
       dockerfile: infrastructure/docker/mlflow/Dockerfile
       args:
         MLFLOW_PYTHON_TAG: ${MLFLOW_PYTHON_TAG:-3.11-slim}
-        MLFLOW_VER: ${MLFLOW_VER:-5.1.7}
+        MLFLOW_VER: ${MLFLOW_VER:-3.8.1}
     command: >
       mlflow server
       --backend-store-uri postgresql://${MLFLOW_POSTGRES_USER}:${MLFLOW_POSTGRES_PASSWORD}@postgres/${MLFLOW_POSTGRES_DB}
