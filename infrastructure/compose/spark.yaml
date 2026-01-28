@@ -1,15 +1,18 @@
 x-spark-common: &spark-common
-  image: bitnami/spark:${SPARK_TAG:-4.1.1}
+  image: apache/spark:${SPARK_TAG:-3.5.4}
+  user: root
   networks:
     - data-network
   volumes:
-    - ../../processing/spark:/opt/bitnami/spark/jobs
-    - ../../data:/opt/bitnami/spark/data
+    - ../../processing/spark:/opt/spark/jobs
+    - ../../data:/opt/spark/data
+  environment:
+    - SPARK_HOME=/opt/spark
 
 services:
   spark-master:
     <<: *spark-common
-    command: bin/spark-class org.apache.spark.deploy.master.Master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     deploy:
       resources:
         limits:
@@ -26,7 +29,7 @@ services:
 
   spark-worker:
     <<: *spark-common
-    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     depends_on:
       - spark-master
     deploy:
@@ -47,9 +50,25 @@ services:
       - SPARK_HADOOP_fs_s3a_impl=org.apache.hadoop.fs.s3a.S3AFileSystem
       - SPARK_HADOOP_fs_s3a_path_style_access=true
 
+  spark-history-server:
+    <<: *spark-common
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    depends_on:
+      - spark-master
+    ports:
+      - "18080:18080"
+    environment:
+      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
+      - SPARK_HADOOP_fs_s3a_endpoint=http://minio:9000
+      - SPARK_HADOOP_fs_s3a_access__key=${MINIO_ROOT_USER}
+      - SPARK_HADOOP_fs_s3a_secret__key=${MINIO_ROOT_PASSWORD}
+      - SPARK_HADOOP_fs_s3a_path__style__access=true
+      - SPARK_HADOOP_fs_s3a_impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+      - SPARK_JARS_PACKAGES=org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262
+
   spark-thrift-server:
     <<: *spark-common
-    command: bin/spark-class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
+    command: /opt/spark/bin/spark-class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
     depends_on:
       - spark-master
     ports:

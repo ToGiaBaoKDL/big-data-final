@@ -27,16 +27,17 @@ services:
       - data-network
 
   minio:
-    image: minio/minio:${MINIO_TAG:-RELEASE.2025-09-07T16-13-09Z}
+    image: quay.io/minio/aistor/minio:${MINIO_TAG:-latest}
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
+    command: server /mnt/data --console-address ":9001" --license /minio.license
     volumes:
-      - minio-data:/data
+      - minio-data:/mnt/data
+      - ../secrets/minio.license:/minio.license
     restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]

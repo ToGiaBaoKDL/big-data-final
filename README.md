@@ -37,10 +37,14 @@ The architecture uses a **Multi-Hop** strategy to organize data maturity:
 - 4GB+ RAM available for containers.
 
 ### Setup
-Clone the repo and configure environment variables:
-```bash
-cp infrastructure/.env.example infrastructure/.env
-```
+1.  **Environment Variables**:
+    ```bash
+    cp infrastructure/.env.example infrastructure/.env
+    ```
+2.  **MinIO License** (Required for AIStor):
+    *   Get a Free License from [MinIO Pricing](https://min.io/pricing).
+    *   Create directory: `mkdir -p infrastructure/secrets`.
+    *   Save the file as `infrastructure/secrets/minio.license`.
 
 ### Run
 Start the entire stack:
