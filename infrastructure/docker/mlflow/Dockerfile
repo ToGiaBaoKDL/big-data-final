@@ -6,10 +6,10 @@ WORKDIR /app
 # Arguments for MLflow version
 ARG MLFLOW_VER=3.8.1
 
-# Install MLflow and dependencies
-# psycopg2-binary for Postgres backend
-# boto3 for S3 artifact storage
-RUN pip install --no-cache-dir \
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install MLflow and dependencies using uv (much faster)
+RUN uv pip install --system --no-cache \
     mlflow==${MLFLOW_VER} \
     psycopg2-binary \
     boto3

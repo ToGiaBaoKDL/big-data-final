@@ -10,10 +10,12 @@ RUN apt-get update && \
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
-USER airflow
+USER root
 
 ARG SPARK_TAG=3.5.8
-RUN pip install --no-cache-dir \
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+RUN uv pip install --system --no-cache \
     apache-airflow-providers-apache-spark \
     apache-airflow-providers-amazon \
     pyspark==${SPARK_TAG} \
@@ -24,3 +26,5 @@ RUN pip install --no-cache-dir \
     clickhouse-connect==0.10.0 \
     minio==7.2.20 \
     mlflow==3.8.1
+
+USER airflow
