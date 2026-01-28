@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: mart_fraud_analysis
+    description: "One-Big-Table (OBT) for Fraud Analysis. Joins Transactions with User History."
+    columns:
+      - name: is_high_risk_user
+        description: "Boolean flag. True if the user has committed fraud in the past."
+      - name: user_lifetime_txns
+        description: "Total transactions made by this user up to the current state."
+      - name: hour_of_day
+        description: "Hour of day."
+      - name: day_of_week
+        description: "Day of week."
+      - name: is_all_orig_balance
+        description: "Flag: Emptied Account."
+      - name: is_dest_zero_init
+        description: "Flag: Zero Init Dest."
+
+  - name: mart_merchant_risk
+    description: "Merchant Risk Profiling. Aggregates fraud reception statistics per merchant."
+    columns:
+      - name: merchant_id
+        description: "Merchant Identifier (Dest)."
+      - name: fraud_risk_ratio
+        description: "Percentage of transactions received that were fraudulent (0.0 to 1.0)."

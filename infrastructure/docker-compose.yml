@@ -1,0 +1,7 @@
+include:
+  - compose/networks-volumes.yaml
+  - compose/platform.yaml
+  - compose/airflow.yaml
+  - compose/spark.yaml
+  - compose/mlflow.yaml
+  - compose/metabase.yaml

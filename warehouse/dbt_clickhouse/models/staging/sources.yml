@@ -1,0 +1,46 @@
+version: 2
+
+sources:
+  - name: finance_dw
+    database: finance_dw
+    schema: finance_dw
+    tables:
+      - name: paysim_txn
+        description: "Raw transactions ingested from S3 (dl-analytics). Contains financial transactions including fraud flags."
+        columns:
+          - name: transaction_time
+            description: "Timestamp of the transaction."
+          - name: type
+            description: "Transaction type (CASH_IN, CASH_OUT, DEBIT, PAYMENT, TRANSFER)."
+          - name: amount
+            description: "Amount of the transaction in local currency."
+          - name: user_id
+            description: "Customer who started the transaction (nameOrig)."
+          - name: merchant_id
+            description: "Recipient of the transaction (nameDest). Can be any customer or merchant (M)."
+          - name: oldbalanceOrg
+            description: "Initial balance of origin account."
+          - name: newbalanceOrig
+            description: "New balance of origin account after transaction."
+          - name: oldbalanceDest
+            description: "Initial balance of recipient account."
+          - name: newbalanceDest
+            description: "New balance of recipient account."
+          - name: isFraud
+            description: "1 if transaction is fraudulent, 0 otherwise."
+          - name: isFlaggedFraud
+            description: "1 if flagged by system (TRANSFER > 200k), 0 otherwise."
+          - name: errorBalanceOrig
+            description: "Calculated error in origin balance (Old - Amount - New)."
+          - name: errorBalanceDest
+            description: "Calculated error in dest balance (Old + Amount - New)."
+          - name: hour_of_day
+            description: "Hour of day (0-23)."
+          - name: day_of_week
+            description: "Day of week (1-7)."
+          - name: is_all_orig_balance
+            description: "Flag: Emptied Account."
+          - name: is_dest_zero_init
+            description: "Flag: Zero Init Dest."
+          - name: is_org_zero_init
+            description: "Flag: Zero Init Orig."

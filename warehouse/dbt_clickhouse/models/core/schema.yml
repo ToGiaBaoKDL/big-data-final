@@ -1,0 +1,58 @@
+version: 2
+
+models:
+  - name: dim_users
+    description: "User dimension table. Contains aggregated lifetime stats for each user (Sender)."
+    columns:
+      - name: user_id
+        description: "Unique Identifier for the User (Sender)."
+        tests:
+          - unique
+          - not_null
+      - name: total_volume
+        description: "Total money sent by this user."
+      - name: fraud_count
+        description: "Number of fraudulent transactions associated with this user."
+
+  - name: fact_transactions
+    description: "Atomic transactions fact table. One row per transaction. Enriched with Feature Engineering columns."
+    columns:
+      - name: txn_id
+        description: "Unique surrogate key for transaction (User + Timestamp)."
+        tests:
+          - unique
+          - not_null
+      - name: transaction_time
+        description: "Timestamp of the transaction."
+      - name: type
+        description: "Transaction type."
+      - name: amount
+        description: "Amount in local currency."
+      - name: user_id
+        description: "Sender ID."
+      - name: merchant_id
+        description: "Recipient ID."
+      - name: old_balance_orig
+        description: "Initial balance of origin."
+      - name: new_balance_orig
+        description: "New balance of origin."
+      - name: old_balance_dest
+        description: "Initial balance of dest."
+      - name: new_balance_dest
+        description: "New balance of dest."
+      - name: is_fraud
+        description: "Fraud flag."
+      - name: is_flagged_fraud
+        description: "System flagged fraud."
+      - name: is_merchant_dest
+        description: "Flag: 1 if destination is Merchant."
+      - name: hour_of_day
+        description: "Hour of day (0-23)."
+      - name: day_of_week
+        description: "Day of week (1-7)."
+      - name: is_all_orig_balance
+        description: "Flag: Emptied Account."
+      - name: is_dest_zero_init
+        description: "Flag: Zero Init Dest."
+      - name: is_org_zero_init
+        description: "Flag: Zero Init Orig."

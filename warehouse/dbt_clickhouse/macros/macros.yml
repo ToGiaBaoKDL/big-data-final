@@ -1,0 +1,10 @@
+version: 2
+
+macros:
+  - name: generate_schema_name
+    description: "Generates custom schema name dynamically based on target environment (e.g., staging, prod)."
+    arguments:
+      - name: custom_schema_name
+        description: "The custom schema name provided in model config."
+      - name: node
+        description: "The node object (resource)."

@@ -1,0 +1,66 @@
+x-spark-common: &spark-common
+  image: bitnami/spark:${SPARK_TAG:-4.1.1}
+  networks:
+    - data-network
+  volumes:
+    - ../../processing/spark:/opt/bitnami/spark/jobs
+    - ../../data:/opt/bitnami/spark/data
+
+services:
+  spark-master:
+    <<: *spark-common
+    command: bin/spark-class org.apache.spark.deploy.master.Master
+    deploy:
+      resources:
+        limits:
+          timezone: 1024M
+          memory: ${SPARK_MASTER_MEM_LIMIT:-2G}
+    ports:
+      - "9090:8080"
+      - "7077:7077"
+    environment:
+      - SPARK_MODE=master
+      - SPARK_EVENTLOG_ENABLED=true
+      - SPARK_EVENTLOG_DIR=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
+      - SPARK_HISTORY_FS_LOGDIRECTORY=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
+      - SPARK_JARS_PACKAGES=org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262
+
+  spark-worker:
+    <<: *spark-common
+    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '${SPARK_WORKER_CPU_LIMIT:-1.0}'
+          memory: ${SPARK_WORKER_MEM_LIMIT:-2G}
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-2G}
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
+      - SPARK_EVENTLOG_ENABLED=true
+      - SPARK_EVENTLOG_DIR=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
+      - SPARK_HISTORY_FS_LOGDIRECTORY=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
+      - SPARK_JARS_PACKAGES=org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262
+      - SPARK_HADOOP_fs_s3a_impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+      - SPARK_HADOOP_fs_s3a_path_style_access=true
+
+  spark-thrift-server:
+    <<: *spark-common
+    command: bin/spark-class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
+    depends_on:
+      - spark-master
+    ports:
+      - "10000:10000"
+      - "4040:4040"
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_HADOOP_fs_s3a_endpoint=http://minio:9000
+      - SPARK_HADOOP_fs_s3a_access__key=${MINIO_ROOT_USER}
+      - SPARK_HADOOP_fs_s3a_secret__key=${MINIO_ROOT_PASSWORD}
+      - SPARK_HADOOP_fs_s3a_path__style__access=true
+      - SPARK_HADOOP_fs_s3a_impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+      - SPARK_JARS_PACKAGES=org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262

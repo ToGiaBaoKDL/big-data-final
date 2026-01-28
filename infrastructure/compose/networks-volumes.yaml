@@ -1,0 +1,10 @@
+networks:
+  data-network:
+    driver: bridge
+
+volumes:
+  postgres-db-volume:
+  minio-data:
+  clickhouse-data:
+  clickhouse-logs:
+  metabase-data:

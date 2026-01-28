@@ -1,0 +1,64 @@
+[project]
+name = "paysim-pipeline"
+version = "0.1.0"
+description = "Big Data Pipeline for PaySim Fraud Detection"
+requires-python = ">=3.11"
+dependencies = [
+    "apache-airflow==3.1.6",
+    # Providers
+    "apache-airflow-providers-apache-spark",
+    "apache-airflow-providers-amazon",
+    # Data Processing
+    "pyspark==4.1.1",
+    "polars==1.37.1",
+    "numpy==2.4.1",
+    "faker==40.1.2",
+    # Database
+    "clickhouse-connect==0.10.0",
+    "minio==7.2.20",
+    # dbt
+    "dbt-clickhouse>=1.8.0",
+    "dbt-core>=1.8.0",
+    # Database Drivers
+    "SQLAlchemy>=2.0.0",
+    "psycopg2-binary>=2.9.9"
+]
+
+[tool.ruff]
+# Enable pycodestyle (`E`) and Pyflakes (`F`) codes by default.
+select = ["E", "F"]
+ignore = []
+
+# Allow autofix for all enabled rules (when `--fix`) is provided.
+fixable = ["A", "B", "C", "D", "E", "F", "G", "I", "N", "Q", "S", "T", "W", "ANN", "ARG", "BLE", "COM", "DJ", "DTZ", "EM", "ERA", "EXE", "FBT", "ICN", "INP", "ISC", "NPY", "PD", "PGH", "PIE", "PL", "PT", "PTH", "PYI", "RET", "RSE", "RUF", "SIM", "SLF", "TCH", "TID", "TRY", "UP", "YTT"]
+unfixable = []
+
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+]
+
+line-length = 120
+
+[tool.ruff.mccabe]
+# Unlike Flake8, default to a complexity level of 10.
+max-complexity = 10
