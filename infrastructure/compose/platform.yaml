@@ -61,7 +61,6 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:${CLICKHOUSE_TAG:-25.8.15-alpine}
-    user: "${AIRFLOW_UID:-50000}:0"
     deploy:
       resources:
         limits:

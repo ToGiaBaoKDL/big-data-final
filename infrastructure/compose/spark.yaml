@@ -1,5 +1,5 @@
 x-spark-common: &spark-common
-  image: apache/spark:${SPARK_TAG:-3.5.4}
+  image: apache/spark:${SPARK_TAG:-3.5.8}
   user: root
   networks:
     - data-network

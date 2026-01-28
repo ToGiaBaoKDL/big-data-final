@@ -3,31 +3,42 @@ x-airflow-common: &airflow-common
     context: ../../
     dockerfile: infrastructure/docker/airflow/Dockerfile
     args:
-      AIRFLOW_IMAGE_TAG: ${AIRFLOW_IMAGE_TAG:-3.1.6-python3.11}
-      SPARK_TAG: ${SPARK_TAG:-4.1.1}
+      AIRFLOW_IMAGE_TAG: ${AIRFLOW_IMAGE_TAG:-2.11.0}
+      SPARK_TAG: ${SPARK_TAG:-3.5.8}
   user: "${AIRFLOW_UID:-50000}:0"
   env_file:
     - ../.env
-  environment:
-    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_POSTGRES_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/${AIRFLOW_POSTGRES_DB}
-    - AIRFLOW__CORE__LOAD_EXAMPLES=False
-    - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
+  environment: &airflow-common-env
+    # Core
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'True'
+    AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: 'False'
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-fb5VVMGdVtk4YBP-Uf5eMsGO_qMV4dqJvRhRGnIFQEs=}
+    
+    # Database
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_POSTGRES_USER:-airflow}:${AIRFLOW_POSTGRES_PASSWORD:-airflow}@postgres/${AIRFLOW_POSTGRES_DB:-airflow}
+    
+    # Webserver
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-temporary_secret_key_change_me}
+    
     # Remote Logging
-    - AIRFLOW__LOGGING__REMOTE_LOGGING=True
-    - AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER=s3://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/airflow
-    - AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID=aws_default
-    # AWS Connection for MinIO (Secrets)
-    - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
-    - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
-    - AWS_REGION_NAME=us-east-1
-    - AWS_ENDPOINT_URL=http://minio:9000
-    - _AIRFLOW_WWW_USER_USERNAME=${_AIRFLOW_WWW_USER_USERNAME:-admin}
+    AIRFLOW__LOGGING__REMOTE_LOGGING: 'True'
+    AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: s3://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/airflow
+    AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: aws_default
+    
+    # AWS Connection for MinIO
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    AWS_REGION_NAME: us-east-1
+    AWS_ENDPOINT_URL: http://minio:9000
+    
     # ClickHouse Connection
-    - CLICKHOUSE_HOST=clickhouse
-    - CLICKHOUSE_PORT=8123
-    - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-    - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+    CLICKHOUSE_HOST: clickhouse
+    CLICKHOUSE_PORT: 8123
+    CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    
   volumes:
     - ../../orchestration/dags:/opt/airflow/dags
     - ../../logs:/opt/airflow/logs
@@ -42,6 +53,30 @@ x-airflow-common: &airflow-common
       condition: service_healthy
 
 services:
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /sources/logs /sources/dags /sources/plugins
+        chown -R "${AIRFLOW_UID:-50000}:0" /sources/{logs,dags,plugins}
+        /entrypoint airflow db init
+        airflow users create \
+          --username ${_AIRFLOW_WWW_USER_USERNAME:-admin} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com \
+          --password ${AIRFLOW_ADMIN_PASSWORD:-admin}
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+    user: "0:0"
+    volumes:
+      - ../../orchestration:/sources
+
   airflow-webserver:
     <<: *airflow-common
     command: webserver
@@ -54,9 +89,10 @@ services:
       - "8080:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
-      interval: 10s
+      interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 30s
     restart: always
     depends_on:
       airflow-init:
@@ -66,9 +102,20 @@ services:
     <<: *airflow-common
     command: scheduler
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '${AIRFLOW_SCHEDULER_CPU:-1.0}'
+          memory: ${AIRFLOW_SCHEDULER_MEM:-2G}
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--hostname", "$${HOSTNAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   airflow-triggerer:
     <<: *airflow-common
@@ -82,14 +129,9 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
-
-  airflow-init:
-    <<: *airflow-common
-    command: version
-    environment:
-      _AIRFLOW_DB_UPGRADE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      # Username handled in common env
-      _AIRFLOW_WWW_USER_PASSWORD: '${AIRFLOW_ADMIN_PASSWORD}'
-      _AIRFLOW_WWW_USER_ROLE: 'Admin'
-      _AIRFLOW_WWW_USER_EMAIL: 'admin@example.com'
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "TriggererJob", "--hostname", "$${HOSTNAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s

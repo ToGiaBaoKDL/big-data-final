@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Big Data Pipeline for PaySim Fraud Detection"
 requires-python = ">=3.11"
 dependencies = [
-    "apache-airflow==3.1.6",
+    "apache-airflow==2.11.0",
     # Providers
     "apache-airflow-providers-apache-spark",
     "apache-airflow-providers-amazon",
@@ -21,7 +21,7 @@ dependencies = [
     "dbt-clickhouse>=1.8.0",
     "dbt-core>=1.8.0",
     # Database Drivers
-    "SQLAlchemy>=2.0.0",
+    "SQLAlchemy<2.0.0",
     "psycopg2-binary>=2.9.9"
 ]
 
