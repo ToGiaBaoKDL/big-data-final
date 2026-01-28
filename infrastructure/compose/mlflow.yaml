@@ -1,7 +1,7 @@
 services:
   mlflow-server:
     build:
-      context: ../
+      context: ../../
       dockerfile: infrastructure/docker/mlflow/Dockerfile
       args:
         MLFLOW_PYTHON_TAG: ${MLFLOW_PYTHON_TAG:-3.11-slim}
