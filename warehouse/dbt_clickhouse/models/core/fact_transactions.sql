@@ -28,5 +28,7 @@ select
     day_of_week,
     is_all_orig_balance,
     is_dest_zero_init,
-    is_org_zero_init
+    is_org_zero_init,
+    is_error_balance_orig,
+    is_error_balance_dest
 from {{ ref('stg_paysim_txn') }}

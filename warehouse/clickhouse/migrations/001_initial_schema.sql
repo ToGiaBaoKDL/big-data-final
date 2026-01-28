@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS finance_dw.paysim_txn (
     is_all_orig_balance UInt8,
     is_dest_zero_init UInt8,
     is_org_zero_init UInt8,
+    is_errorBalanceOrig UInt8,
+    is_errorBalanceDest UInt8,
     
     -- Partition Columns
     part_dt String,

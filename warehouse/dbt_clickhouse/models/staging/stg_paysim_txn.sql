@@ -21,6 +21,8 @@ renamed as (
         is_all_orig_balance,
         is_dest_zero_init,
         is_org_zero_init,
+        is_errorBalanceOrig as is_error_balance_orig,
+        is_errorBalanceDest as is_error_balance_dest,
         concat(user_id, '-', toString(toUnixTimestamp(transaction_time))) as txn_id
     from source
 )
