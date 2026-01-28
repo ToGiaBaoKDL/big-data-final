@@ -13,7 +13,6 @@ services:
     deploy:
       resources:
         limits:
-          timezone: 1024M
           memory: ${SPARK_MASTER_MEM_LIMIT:-2G}
     ports:
       - "9090:8080"
