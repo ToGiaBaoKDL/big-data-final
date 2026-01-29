@@ -9,7 +9,7 @@ dependencies = [
     "apache-airflow-providers-apache-spark",
     "apache-airflow-providers-amazon",
     # Data Processing
-    "pyspark==3.5.1",
+    "pyspark==3.5.8",
     "polars==1.37.1",
     "numpy==2.4.1",
     "faker==40.1.2",
