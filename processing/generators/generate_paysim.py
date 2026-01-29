@@ -3,6 +3,7 @@ import shutil
 import random
 import io
 from datetime import datetime, timedelta
+from collections import defaultdict
 import polars as pl
 import numpy as np
 from faker import Faker
@@ -19,23 +20,53 @@ BUCKET_LANDING = os.getenv("MINIO_BUCKET_LANDING", "dl-landing-8f42a1")
 START_DATE_SIMULATION = datetime(2025, 12, 29, 0, 0, 0)
 FAKE = Faker()
 
-# Transaction Type Distribution (Based on real PaySim data)
+# PaySim Config
 TXN_TYPES = ["PAYMENT", "CASH_OUT", "CASH_IN", "TRANSFER", "DEBIT"]
 TXN_WEIGHTS = [0.35, 0.30, 0.20, 0.10, 0.05]
 
 # Fraud Configuration
-FRAUD_BASE_RATE = 0.0013  # 0.13% - realistic fraud rate
-FRAUD_NIGHT_MULTIPLIER = 3.0  # Fraud tăng 3x vào đêm (22h-6h)
-FRAUD_TYPES = ["TRANSFER", "CASH_OUT"]  # Chỉ có 2 loại này có fraud
+FRAUD_BASE_RATE = 0.0013
+FRAUD_NIGHT_MULTIPLIER = 3.0
+FRAUD_TYPES = ["TRANSFER", "CASH_OUT"]
 
 # Fraud Pattern Distribution
-FRAUD_PATTERN_EMPTY_ACCOUNT = 0.60  # 60%: Empty toàn bộ account
-FRAUD_PATTERN_LARGE_ROUND = 0.20    # 20%: Large round amounts (100k, 500k, 1M)
-FRAUD_PATTERN_JUST_BELOW = 0.15     # 15%: Just below flagging threshold
-FRAUD_PATTERN_NORMAL_LOOKING = 0.05 # 5%: Normal-looking amounts
+FRAUD_PATTERN_EMPTY = 0.45
+FRAUD_PATTERN_LARGE = 0.15
+FRAUD_PATTERN_JUST_BELOW = 0.15
+FRAUD_PATTERN_BURST = 0.15
+FRAUD_PATTERN_NORMAL = 0.10
 
-# Mule accounts (fraud destinations reused across frauds)
-MULE_ACCOUNTS = [FAKE.bothify(text='C#########') for _ in range(50)]  # 50 mule accounts
+# Customer Segments
+CUSTOMER_SEGMENTS = {
+    'high_value': 0.05,
+    'business': 0.10,
+    'regular': 0.60,
+    'low_income': 0.20,
+    'dormant': 0.05
+}
+
+# Activity rates by segment (transactions per hour)
+SEGMENT_ACTIVITY_RATES = {
+    'high_value': 1.0,
+    'business': 1.2,    # More active
+    'regular': 1.0,
+    'low_income': 0.8,  # Less active
+    'dormant': 0.05     # Very rare (5% of normal)
+}
+
+# --- Data Pools ---
+N_CUSTOMERS = 15000
+N_MERCHANTS = 1000
+CUSTOMER_POOL = [f"C{np.random.randint(10**8, 10**9)}" for _ in range(N_CUSTOMERS)]
+MERCHANT_POOL = [f"M{np.random.randint(10**8, 10**9)}" for _ in range(N_MERCHANTS)]
+MULE_ACCOUNTS = [f"C{np.random.randint(10**8, 10**9)}" for _ in range(50)]
+
+# Assign segments to customers (persistent)
+CUSTOMER_SEGMENTS_MAP = {}
+segment_keys = list(CUSTOMER_SEGMENTS.keys())
+segment_weights = list(CUSTOMER_SEGMENTS.values())
+for cust in CUSTOMER_POOL:
+    CUSTOMER_SEGMENTS_MAP[cust] = np.random.choice(segment_keys, p=segment_weights)
 
 def get_minio_client():
     return Minio(
@@ -45,18 +76,104 @@ def get_minio_client():
         secure=False
     )
 
-def step_to_timestamp(step: int) -> datetime:
-    """Maps an integer step (hour) to a simulation datetime."""
+def step_to_base_timestamp(step: int) -> datetime:
+    """Trả về thời điểm bắt đầu của step."""
     return START_DATE_SIMULATION + timedelta(hours=step - 1)
 
-def add_partition_cols(df: pl.DataFrame) -> pl.DataFrame:
-    """Adds part_dt (YYYYMMDD) and part_hour (HH) based on step/timestamp."""
-    return df.with_columns([
-        pl.col("step").map_elements(lambda s: step_to_timestamp(s), return_dtype=pl.Datetime).alias("transaction_time")
-    ]).with_columns([
-        pl.col("transaction_time").dt.strftime("%Y%m%d").alias("part_dt"),
-        pl.col("transaction_time").dt.strftime("%H").alias("part_hour")
-    ])
+def generate_diverse_timestamps(step: int, n_rows: int) -> tuple:
+    """
+    Tạo timestamps phân bố trong 1 giờ với clustering effect.
+    Returns: (timestamps_array, part_dts_array, part_hours_array)
+    """
+    base_time = step_to_base_timestamp(step)
+    
+    # Generate random seconds (0-3599)
+    random_offsets = np.random.uniform(0, 3600, size=n_rows)
+    
+    # Clustering: 30% vào phút tròn (:00, :15, :30, :45)
+    cluster_mask = np.random.random(n_rows) < 0.30
+    cluster_minutes = np.random.choice([0, 15, 30, 45], size=cluster_mask.sum())
+    random_offsets[cluster_mask] = cluster_minutes * 60 + np.random.uniform(0, 60, size=cluster_mask.sum())
+    
+    # Convert to timestamps - vectorized
+    times = np.array([base_time + timedelta(seconds=float(off)) for off in random_offsets])
+    part_dts = np.array([t.strftime("%Y%m%d") for t in times])
+    part_hours = np.array([t.strftime("%H") for t in times])
+    
+    return times, part_dts, part_hours
+
+def get_segment_balance_range(segment: str) -> tuple:
+    """Trả về (min, max) balance cho từng segment."""
+    if segment == 'high_value':
+        return (100000, 10000000)
+    elif segment == 'business':
+        return (50000, 2000000)
+    elif segment == 'low_income':
+        return (100, 10000)
+    elif segment == 'dormant':
+        return (0, 5000)
+    else:  # regular
+        return (1000, 100000)
+
+def initialize_balance(account: str) -> float:
+    """Khởi tạo balance dựa trên segment của account."""
+    if account.startswith('M'):  # Merchant
+        return np.random.lognormal(mean=10, sigma=2)
+    
+    segment = CUSTOMER_SEGMENTS_MAP.get(account, 'regular')
+    min_bal, max_bal = get_segment_balance_range(segment)
+    
+    balance = np.random.lognormal(mean=8, sigma=2)
+    balance = np.clip(balance, min_bal, max_bal)
+    return balance
+
+def get_amount_by_segment_and_type(txn_type: str, segment: str, n: int) -> np.ndarray:
+    """Generate amounts dựa trên segment và transaction type."""
+    if segment == 'high_value':
+        if txn_type == "TRANSFER":
+            amounts = np.random.lognormal(mean=10, sigma=2, size=n)
+            amounts = np.clip(amounts, 50000, 50000000)
+        elif txn_type == "CASH_OUT":
+            amounts = np.random.lognormal(mean=9, sigma=1.8, size=n)
+            amounts = np.clip(amounts, 10000, 5000000)
+        else:
+            amounts = np.random.lognormal(mean=7.5, sigma=1.5, size=n)
+            amounts = np.clip(amounts, 1000, 500000)
+    
+    elif segment == 'business':
+        if txn_type == "TRANSFER":
+            amounts = np.random.lognormal(mean=9, sigma=1.8, size=n)
+            amounts = np.clip(amounts, 10000, 10000000)
+        elif txn_type == "CASH_OUT":
+            amounts = np.random.lognormal(mean=8, sigma=1.6, size=n)
+            amounts = np.clip(amounts, 5000, 2000000)
+        else:
+            amounts = np.random.lognormal(mean=7, sigma=1.4, size=n)
+            amounts = np.clip(amounts, 500, 200000)
+    
+    elif segment == 'low_income':
+        if txn_type == "TRANSFER":
+            amounts = np.random.lognormal(mean=6, sigma=1.2, size=n)
+            amounts = np.clip(amounts, 100, 50000)
+        elif txn_type == "CASH_OUT":
+            amounts = np.random.lognormal(mean=5.5, sigma=1.1, size=n)
+            amounts = np.clip(amounts, 50, 20000)
+        else:
+            amounts = np.random.lognormal(mean=5, sigma=1.0, size=n)
+            amounts = np.clip(amounts, 20, 5000)
+    
+    else:  # regular, dormant
+        if txn_type == "TRANSFER":
+            amounts = np.random.lognormal(mean=8, sigma=2, size=n)
+            amounts = np.clip(amounts, 100, 10000000)
+        elif txn_type == "CASH_OUT":
+            amounts = np.random.lognormal(mean=7, sigma=1.5, size=n)
+            amounts = np.clip(amounts, 50, 1000000)
+        else:
+            amounts = np.random.lognormal(mean=6, sigma=1.2, size=n)
+            amounts = np.clip(amounts, 50, 50000)
+    
+    return amounts
 
 def upload_local_directory_to_minio(client, local_path, bucket, prefix):
     """Recursively uploads a local directory to MinIO."""
@@ -71,18 +188,40 @@ def upload_local_directory_to_minio(client, local_path, bucket, prefix):
 
 def process_initial_load(source_file):
     """
-    Mode Init: Reads CSV, adds partitions, saves as Parquet, uploads to MinIO.
-    Target: .warehouse/paysim_txn/part_dt=.../part_hour=...
+    Mode Init: Đọc CSV, thêm varied timestamps, partition và upload.
     """
     print(f"Processing Initial Data from {source_file}...")
     
-    # Read CSV
     df = pl.read_csv(source_file)
     
-    # Add partition columns
-    df_processed = add_partition_cols(df)
+    if 'step' not in df.columns:
+        raise ValueError("CSV must contain 'step' column")
     
-    # Write partitioned parquet locally first
+    print(f"Total rows: {len(df)}")
+    print("Adding varied transaction timestamps...")
+    
+    # Group by step để xử lý
+    steps = df["step"].unique().sort()
+    dfs_with_timestamps = []
+    
+    for step_val in steps:
+        step_df = df.filter(pl.col("step") == step_val)
+        n_step_rows = len(step_df)
+        
+        # Generate varied timestamps
+        times, part_dts, part_hours = generate_diverse_timestamps(step_val, n_step_rows)
+        
+        step_df = step_df.with_columns([
+            pl.Series("transaction_time", times),
+            pl.Series("part_dt", part_dts),
+            pl.Series("part_hour", part_hours)
+        ])
+        
+        dfs_with_timestamps.append(step_df)
+    
+    df_processed = pl.concat(dfs_with_timestamps)
+    
+    # Write partitioned parquet
     temp_dir = "temp_paysim_init"
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
@@ -94,7 +233,7 @@ def process_initial_load(source_file):
         partition_by=["part_dt", "part_hour"]
     )
     
-    # Upload to MinIO
+    # Upload
     client = get_minio_client()
     if not client.bucket_exists(BUCKET_LANDING):
         client.make_bucket(BUCKET_LANDING)
@@ -102,235 +241,260 @@ def process_initial_load(source_file):
     print("Uploading to MinIO...")
     upload_local_directory_to_minio(client, temp_dir, BUCKET_LANDING, ".warehouse/paysim_txn")
     
-    # Cleanup
     shutil.rmtree(temp_dir)
     print("Initial Load Complete.")
 
 def get_fraud_rate_for_hour(hour: int) -> float:
-    """
-    Returns fraud rate based on time of day.
-    Night hours (22-6) have higher fraud rate.
-    """
+    """Fraud cao hơn vào ban đêm (22h-6h)."""
     if 22 <= hour or hour <= 6:
         return FRAUD_BASE_RATE * FRAUD_NIGHT_MULTIPLIER
     return FRAUD_BASE_RATE
 
 def generate_step_data(step: int, base_rows: int):
     """
-    Generates realistic PaySim data for a single step (hour).
-    Uses vectorized operations for better performance.
+    Generate data với:
+    1. Varied timestamps
+    2. Weighted account selection (dormant accounts ít giao dịch)
+    3. Balance tính ĐÚNG theo thứ tự thời gian
+    4. Fraud patterns đa dạng
     """
-    ts = step_to_timestamp(step)
-    hour = ts.hour
+    base_time = step_to_base_timestamp(step)
+    hour = base_time.hour
     
-    # Realistic hourly variation based on time of day
-    # Peak hours (9-17): +30% to +50%
-    # Night hours (0-6): -40% to -20%
-    # Evening (18-23): -10% to +10%
-    # Morning (7-8): +10% to +30%
+    # Hourly variation
     if 9 <= hour <= 17:
         multiplier = random.uniform(1.30, 1.50)
     elif 0 <= hour <= 6:
         multiplier = random.uniform(0.60, 0.80)
     elif 18 <= hour <= 23:
         multiplier = random.uniform(0.90, 1.10)
-    else:  # 7-8
+    else:
         multiplier = random.uniform(1.10, 1.30)
     
-    # Add random daily variation (+/- 10%)
     daily_variation = random.uniform(0.90, 1.10)
-    
     n_rows = int(base_rows * multiplier * daily_variation)
+    
     print(f"  > Generating {n_rows} rows for Step {step} (Hour {hour:02d})...")
     
-    part_dt = ts.strftime("%Y%m%d")
-    part_hour = ts.strftime("%H")
+    # 1. Generate timestamps
+    trans_times, part_dts, part_hours = generate_diverse_timestamps(step, n_rows)
     
-    # Generate transaction types
+    # 2. Generate accounts với WEIGHTED selection (dormant ít hơn)
+    # Create weighted customer pool
+    customer_weights = np.array([
+        SEGMENT_ACTIVITY_RATES[CUSTOMER_SEGMENTS_MAP.get(c, 'regular')] 
+        for c in CUSTOMER_POOL
+    ])
+    customer_weights = customer_weights / customer_weights.sum()
+    
+    name_orig = np.random.choice(CUSTOMER_POOL, size=n_rows, replace=True, p=customer_weights)
+    
+    # 3. Generate transaction types
     types_array = np.random.choice(TXN_TYPES, size=n_rows, p=TXN_WEIGHTS)
     
-    # Generate amounts based on transaction type
-    amounts = np.zeros(n_rows)
-    for i, txn_type in enumerate(TXN_TYPES):
+    # 4. Generate destinations
+    name_dest = np.empty(n_rows, dtype=object)
+    for txn_type in TXN_TYPES:
         mask = types_array == txn_type
         count = mask.sum()
         if count > 0:
-            if txn_type == "TRANSFER":
-                # TRANSFER: higher amounts, log-normal distribution
-                amounts[mask] = np.random.lognormal(mean=8, sigma=2, size=count)
-                amounts[mask] = np.clip(amounts[mask], 10, 10000000)
-            elif txn_type == "CASH_OUT":
-                # CASH_OUT: medium to high
-                amounts[mask] = np.random.lognormal(mean=7, sigma=1.5, size=count)
-                amounts[mask] = np.clip(amounts[mask], 10, 1000000)
+            if txn_type in ["PAYMENT", "DEBIT"]:
+                name_dest[mask] = np.random.choice(MERCHANT_POOL, size=count, replace=True)
             else:
-                # PAYMENT, CASH_IN, DEBIT: lower amounts
-                amounts[mask] = np.random.lognormal(mean=6, sigma=1.2, size=count)
-                amounts[mask] = np.clip(amounts[mask], 10, 50000)
+                name_dest[mask] = np.random.choice(CUSTOMER_POOL, size=count, replace=True, p=customer_weights)
+    
+    # 5. Get segments
+    segments = np.array([CUSTOMER_SEGMENTS_MAP.get(acc, 'regular') for acc in name_orig])
+    
+    # 6. Generate amounts dựa trên segment - VECTORIZED
+    amounts = np.zeros(n_rows)
+    for txn_type in TXN_TYPES:
+        for segment in CUSTOMER_SEGMENTS.keys():
+            mask = (types_array == txn_type) & (segments == segment)
+            count = mask.sum()
+            if count > 0:
+                amounts[mask] = get_amount_by_segment_and_type(txn_type, segment, count)
     
     amounts = np.round(amounts, 2)
     
-    # Generate account names
-    name_orig = np.array([FAKE.bothify(text='C#########') for _ in range(n_rows)])
-    name_dest = np.array([
-        FAKE.bothify(text='M#########') if types_array[i] in ["PAYMENT", "DEBIT"]
-        else FAKE.bothify(text='C#########')
-        for i in range(n_rows)
-    ])
-    
-    # Generate balances - vectorized
-    old_balance_orig = np.zeros(n_rows)
-    new_balance_orig = np.zeros(n_rows)
-    old_balance_dest = np.zeros(n_rows)
-    new_balance_dest = np.zeros(n_rows)
-    
-    for i, txn_type in enumerate(TXN_TYPES):
-        mask = types_array == txn_type
-        count = mask.sum()
-        if count == 0:
-            continue
-            
-        if txn_type in ["PAYMENT", "TRANSFER", "CASH_OUT", "DEBIT"]:
-            # Outgoing: ensure sufficient balance (with some variance)
-            old_balance_orig[mask] = amounts[mask] * np.random.uniform(1.1, 5.0, size=count)
-            new_balance_orig[mask] = old_balance_orig[mask] - amounts[mask]
-        else:  # CASH_IN
-            # Incoming: random starting balance
-            old_balance_orig[mask] = np.random.uniform(0, 50000, size=count)
-            new_balance_orig[mask] = old_balance_orig[mask] + amounts[mask]
-        
-        # Destination balances
-        old_balance_dest[mask] = np.random.uniform(0, 100000, size=count)
-        
-        if txn_type in ["CASH_IN", "TRANSFER"]:
-            # Dest receives money
-            new_balance_dest[mask] = old_balance_dest[mask] + amounts[mask]
-        elif txn_type == "CASH_OUT":
-            # Merchant pays out cash (balance decreases)
-            new_balance_dest[mask] = old_balance_dest[mask] - amounts[mask]
-            # Ensure non-negative
-            new_balance_dest[mask] = np.maximum(new_balance_dest[mask], 0)
-        else:
-            # PAYMENT, DEBIT: dest balance unchanged
-            new_balance_dest[mask] = old_balance_dest[mask]
-    
-    # Round balances
-    old_balance_orig = np.round(old_balance_orig, 2)
-    new_balance_orig = np.round(new_balance_orig, 2)
-    old_balance_dest = np.round(old_balance_dest, 2)
-    new_balance_dest = np.round(new_balance_dest, 2)
-    
-    # Initialize fraud columns (use int8 for storage optimization)
+    # 7. Inject Fraud - VECTORIZED approach
     is_fraud = np.zeros(n_rows, dtype=np.int8)
     is_flagged_fraud = np.zeros(n_rows, dtype=np.int8)
+    fraud_pattern_type = np.full(n_rows, '', dtype=object)
     
-    # Inject fraud - only for TRANSFER and CASH_OUT
     fraud_rate = get_fraud_rate_for_hour(hour)
     fraud_eligible = np.isin(types_array, FRAUD_TYPES)
     fraud_candidates = np.where(fraud_eligible)[0]
     
+    burst_fraud_accounts = set()
+    
     if len(fraud_candidates) > 0:
-        n_frauds = int(len(fraud_candidates) * fraud_rate)
+        n_frauds = max(1, int(len(fraud_candidates) * fraud_rate))
         fraud_indices = np.random.choice(fraud_candidates, size=min(n_frauds, len(fraud_candidates)), replace=False)
         
         for idx in fraud_indices:
             is_fraud[idx] = 1
             txn_type = types_array[idx]
             
-            # Determine fraud pattern
             pattern_roll = random.random()
             
-            if pattern_roll < FRAUD_PATTERN_EMPTY_ACCOUNT:
-                # Pattern 1: Empty account (most common)
-                amounts[idx] = old_balance_orig[idx]
-                new_balance_orig[idx] = 0.0
+            if pattern_roll < FRAUD_PATTERN_EMPTY:
+                fraud_pattern_type[idx] = 'empty'
                 
-            elif pattern_roll < FRAUD_PATTERN_EMPTY_ACCOUNT + FRAUD_PATTERN_LARGE_ROUND:
-                # Pattern 2: Large round amounts
-                round_amounts = [50000, 100000, 250000, 500000, 1000000]
+            elif pattern_roll < FRAUD_PATTERN_EMPTY + FRAUD_PATTERN_LARGE:
+                fraud_pattern_type[idx] = 'large_round'
+                round_amounts = [50000, 100000, 250000, 500000, 1000000, 2000000]
                 amounts[idx] = random.choice(round_amounts)
-                # Ensure sufficient balance
-                if amounts[idx] > old_balance_orig[idx]:
-                    old_balance_orig[idx] = amounts[idx] * random.uniform(1.1, 1.5)
-                new_balance_orig[idx] = old_balance_orig[idx] - amounts[idx]
                 
-            elif pattern_roll < FRAUD_PATTERN_EMPTY_ACCOUNT + FRAUD_PATTERN_LARGE_ROUND + FRAUD_PATTERN_JUST_BELOW:
-                # Pattern 3: Just below flagging threshold (199k for TRANSFER)
+            elif pattern_roll < FRAUD_PATTERN_EMPTY + FRAUD_PATTERN_LARGE + FRAUD_PATTERN_JUST_BELOW:
+                fraud_pattern_type[idx] = 'just_below'
                 if txn_type == "TRANSFER":
                     amounts[idx] = random.uniform(180000, 199999)
-                else:  # CASH_OUT
+                else:
                     amounts[idx] = random.uniform(150000, 250000)
-                # Ensure sufficient balance
-                if amounts[idx] > old_balance_orig[idx]:
-                    old_balance_orig[idx] = amounts[idx] * random.uniform(1.1, 1.5)
-                new_balance_orig[idx] = old_balance_orig[idx] - amounts[idx]
+                    
+            elif pattern_roll < FRAUD_PATTERN_EMPTY + FRAUD_PATTERN_LARGE + FRAUD_PATTERN_JUST_BELOW + FRAUD_PATTERN_BURST:
+                fraud_pattern_type[idx] = 'burst'
+                amounts[idx] = round(random.uniform(10000, 30000), 2)
+                burst_fraud_accounts.add(name_orig[idx])
                 
             else:
-                # Pattern 4: Normal-looking amounts (harder to detect)
+                fraud_pattern_type[idx] = 'normal'
                 amounts[idx] = round(random.uniform(5000, 50000), 2)
-                if amounts[idx] > old_balance_orig[idx]:
-                    old_balance_orig[idx] = amounts[idx] * random.uniform(1.5, 3.0)
-                new_balance_orig[idx] = old_balance_orig[idx] - amounts[idx]
             
-            # Round amounts
             amounts[idx] = round(amounts[idx], 2)
-            old_balance_orig[idx] = round(old_balance_orig[idx], 2)
-            new_balance_orig[idx] = round(new_balance_orig[idx], 2)
             
-            # Destination: Use mule accounts (80% reuse, 20% new)
-            if random.random() < 0.80:
+            # Use mule accounts
+            if random.random() < 0.85:
                 name_dest[idx] = random.choice(MULE_ACCOUNTS)
-            else:
-                name_dest[idx] = FAKE.bothify(text='C#########')
             
-            # Dest receives the fraud amount
-            new_balance_dest[idx] = old_balance_dest[idx] + amounts[idx]
-            new_balance_dest[idx] = round(new_balance_dest[idx], 2)
-            
-            # PaySim flagging rule: TRANSFER > 200,000
+            # Flagging rule
             if txn_type == "TRANSFER" and amounts[idx] > 200000:
                 is_flagged_fraud[idx] = 1
     
-    # Create DataFrame
+    # Add burst fraud
+    if burst_fraud_accounts:
+        for burst_acc in list(burst_fraud_accounts)[:3]:
+            # Find other ELIGIBLE transactions from same account
+            same_acc_indices = np.where(
+                (name_orig == burst_acc) & 
+                (is_fraud == 0) & 
+                fraud_eligible
+            )[0]
+            
+            n_additional = min(random.randint(2, 5), len(same_acc_indices))
+            if n_additional > 0:
+                additional_fraud_idx = np.random.choice(same_acc_indices, size=n_additional, replace=False)
+                for idx in additional_fraud_idx:
+                    is_fraud[idx] = 1
+                    fraud_pattern_type[idx] = 'burst_additional'
+                    amounts[idx] = round(random.uniform(10000, 30000), 2)
+                    if random.random() < 0.85:
+                        name_dest[idx] = random.choice(MULE_ACCOUNTS)
+    
+    # 8. Sort ALL arrays by timestamp BEFORE balance calculation
+    time_values = np.array([t.timestamp() for t in trans_times])
+    sorted_indices = np.argsort(time_values)
+    
+    # Reorder ALL arrays
+    trans_times = trans_times[sorted_indices]
+    part_dts = part_dts[sorted_indices]
+    part_hours = part_hours[sorted_indices]
+    name_orig = name_orig[sorted_indices]
+    name_dest = name_dest[sorted_indices]
+    types_array = types_array[sorted_indices]
+    segments = segments[sorted_indices]
+    amounts = amounts[sorted_indices]
+    is_fraud = is_fraud[sorted_indices]
+    is_flagged_fraud = is_flagged_fraud[sorted_indices]
+    fraud_pattern_type = fraud_pattern_type[sorted_indices]
+    
+    # 9. Calculate balances - VECTORIZED where possible
+    balance_cache = {}
+    
+    old_balance_orig = np.zeros(n_rows)
+    new_balance_orig = np.zeros(n_rows)
+    old_balance_dest = np.zeros(n_rows)
+    new_balance_dest = np.zeros(n_rows)
+    
+    # Process in order (already sorted)
+    for i in range(n_rows):
+        acc_orig = name_orig[i]
+        acc_dest = name_dest[i]
+        amt = amounts[i]
+        txn_type = types_array[i]
+        
+        # Initialize balance if needed
+        if acc_orig not in balance_cache:
+            balance_cache[acc_orig] = initialize_balance(acc_orig)
+        
+        ob_orig = balance_cache[acc_orig]
+        
+        # Empty account fraud pattern
+        if is_fraud[i] and fraud_pattern_type[i] == 'empty':
+            amt = ob_orig
+            amounts[i] = round(amt, 2)
+        
+        # Calculate new balance for origin
+        if txn_type in ["PAYMENT", "TRANSFER", "CASH_OUT", "DEBIT"]:
+            nb_orig = max(0, ob_orig - amt)
+        else:  # CASH_IN
+            nb_orig = ob_orig + amt
+        
+        old_balance_orig[i] = round(ob_orig, 2)
+        new_balance_orig[i] = round(nb_orig, 2)
+        balance_cache[acc_orig] = nb_orig
+        
+        # Destination balance
+        if acc_dest not in balance_cache:
+            balance_cache[acc_dest] = initialize_balance(acc_dest)
+        
+        ob_dest = balance_cache[acc_dest]
+        
+        if txn_type in ["CASH_IN", "TRANSFER"]:
+            nb_dest = ob_dest + amt
+        elif txn_type == "CASH_OUT":
+            nb_dest = max(0, ob_dest - amt)
+        else:
+            nb_dest = ob_dest
+        
+        old_balance_dest[i] = round(ob_dest, 2)
+        new_balance_dest[i] = round(nb_dest, 2)
+        balance_cache[acc_dest] = nb_dest
+    
+    # 10. Create DataFrame - ALL arrays are already sorted by time
     df = pl.DataFrame({
         "step": np.full(n_rows, step),
-        "type": types_array,
+        "type": types_array.tolist(),
         "amount": amounts,
-        "nameOrig": name_orig,
+        "nameOrig": name_orig.tolist(),
         "oldbalanceOrg": old_balance_orig,
         "newbalanceOrig": new_balance_orig,
-        "nameDest": name_dest,
+        "nameDest": name_dest.tolist(),
         "oldbalanceDest": old_balance_dest,
         "newbalanceDest": new_balance_dest,
         "isFraud": is_fraud,
         "isFlaggedFraud": is_flagged_fraud,
-        "transaction_time": [ts] * n_rows,
-        "part_dt": [part_dt] * n_rows,
-        "part_hour": [part_hour] * n_rows
+        "transaction_time": trans_times.tolist(),
+        "part_dt": part_dts.tolist(),
+        "part_hour": part_hours.tolist()
     })
     
     return df
 
 def generate_incremental_batch(base_rows: int, start_step: int):
-    """
-    Generates 1 hour of data (1 step) for the given step.
-    """
+    """Generates 1 step và upload lên MinIO."""
     print(f"Generating data for Step {start_step}...")
     
     client = get_minio_client()
-    
-    # Generate for single step
     df = generate_step_data(start_step, base_rows)
     
-    # Infer partition from first row
     part_dt = df["part_dt"][0]
     part_hour = df["part_hour"][0]
     
-    # Filename
     filename = f"paysim_step{start_step}.parquet"
     object_name = f".warehouse/paysim_txn/part_dt={part_dt}/part_hour={part_hour}/{filename}"
     
-    # Buffer & Upload
     buffer = io.BytesIO()
     df.write_parquet(buffer)
     buffer.seek(0)
@@ -344,18 +508,15 @@ def generate_incremental_batch(base_rows: int, start_step: int):
         file_size,
         content_type="application/octet-stream"
     )
-    
     print("Generation Complete.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PaySim Data Generator for MinIO/Datalake")
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
-    # Init mode
-    p_init = subparsers.add_parser("init", help="Initial load from CSV")
+    p_init = subparsers.add_parser("init", help="Initial load từ CSV")
     p_init.add_argument("--file", required=True, help="Path to PaySim CSV file")
 
-    # Generate mode
     p_gen = subparsers.add_parser("generate", help="Generate incremental data")
     p_gen.add_argument("--rows", type=int, default=1000, help="Base rows per hour")
     p_gen.add_argument("--step", type=int, required=True, help="Step (hour) to generate")
@@ -368,19 +529,14 @@ if __name__ == "__main__":
             process_initial_load(args.file)
         elif args.mode == "generate":
             if args.local:
-                steps_to_generate = 1
-                start_step = args.step
-                print(f"Generating LOCAL data for Step {start_step}...")
-                
-                df = generate_step_data(start_step, args.rows)
-                
+                df = generate_step_data(args.step, args.rows)
                 part_dt = df["part_dt"][0]
                 part_hour = df["part_hour"][0]
                 
-                filename = f"paysim_step{start_step}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
                 local_path = f"sample_data/dl-landing/.warehouse/paysim_txn/part_dt={part_dt}/part_hour={part_hour}"
                 os.makedirs(local_path, exist_ok=True)
                 
+                filename = f"paysim_step{args.step}.parquet"
                 full_path = os.path.join(local_path, filename)
                 df.write_parquet(full_path)
                 print(f"Saved locally to: {full_path}")

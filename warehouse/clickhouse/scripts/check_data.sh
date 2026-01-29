@@ -18,7 +18,7 @@ CONTAINER="infrastructure-clickhouse-1"
 
 # 2. Load Environment Variables
 if [ -f "$ENV_FILE" ]; then
-    echo -e "${BLUE}ℹ️  Loading config from:${NC} $ENV_FILE"
+    echo -e "${BLUE}Loading config from:${NC} $ENV_FILE"
     set -a
     source "$ENV_FILE"
     set +a
