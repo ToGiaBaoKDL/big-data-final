@@ -1,22 +1,6 @@
 version: 2
 
 models:
-  - name: mart_fraud_analysis
-    description: "One-Big-Table (OBT) for Fraud Analysis. Joins Transactions with User History."
-    columns:
-      - name: is_high_risk_user
-        description: "Boolean flag. True if the user has committed fraud in the past."
-      - name: user_lifetime_txns
-        description: "Total transactions made by this user up to the current state."
-      - name: hour_of_day
-        description: "Hour of day."
-      - name: day_of_week
-        description: "Day of week."
-      - name: is_all_orig_balance
-        description: "Flag: Emptied Account."
-      - name: is_dest_zero_init
-        description: "Flag: Zero Init Dest."
-
   - name: mart_merchant_risk
     description: "Merchant Risk Profiling. Aggregates fraud reception statistics per merchant."
     columns:
@@ -24,3 +8,47 @@ models:
         description: "Merchant Identifier (Dest)."
       - name: fraud_risk_ratio
         description: "Percentage of transactions received that were fraudulent (0.0 to 1.0)."
+
+  - name: mart_hourly_patterns
+    description: "Fraud patterns by hour and day of week for dashboard and alert calibration."
+    columns:
+      - name: hour_of_day
+        description: "Hour (0-23)."
+      - name: day_of_week
+        description: "Day of week (1-7)."
+      - name: fraud_rate_pct
+        description: "Fraud rate as percentage."
+      - name: risk_level
+        description: "HIGH/MEDIUM/LOW based on fraud rate."
+
+  - name: mart_user_risk_score
+    description: "User risk scoring combining multiple fraud indicators into a 0-100 score."
+    columns:
+      - name: user_id
+        description: "User identifier."
+      - name: risk_score
+        description: "Composite risk score (0-100)."
+      - name: risk_category
+        description: "BLOCKED/HIGH_RISK/MEDIUM_RISK/LOW_RISK."
+
+  - name: mart_transaction_type_analysis
+    description: "Fraud analysis broken down by transaction type (TRANSFER, CASH_OUT, etc)."
+    columns:
+      - name: type
+        description: "Transaction type."
+      - name: fraud_rate_pct
+        description: "Fraud rate for this type."
+      - name: pct_of_total_volume
+        description: "This type's share of total transaction volume."
+
+  - name: mart_anomaly_detection
+    description: "Flagged transactions with anomaly scores for investigation queue."
+    columns:
+      - name: txn_id
+        description: "Transaction ID."
+      - name: anomaly_score
+        description: "Number of anomaly flags (0-5)."
+      - name: investigation_priority
+        description: "CRITICAL/HIGH/MEDIUM/LOW/NORMAL."
+      - name: anomaly_reasons
+        description: "Comma-separated list of triggered anomaly flags."

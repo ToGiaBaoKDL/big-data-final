@@ -7,6 +7,10 @@ sources:
     tables:
       - name: paysim_txn
         description: "Raw transactions ingested from S3 (dl-analytics). Contains financial transactions including fraud flags."
+        freshness:
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 6, period: hour}
+        loaded_at_field: transaction_time
         columns:
           - name: transaction_time
             description: "Timestamp of the transaction."

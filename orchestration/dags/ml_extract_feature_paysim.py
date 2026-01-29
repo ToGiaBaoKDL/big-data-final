@@ -1,6 +1,7 @@
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from airflow.utils.dates import days_ago
+from airflow.sensors.external_task import ExternalTaskSensor
+import pendulum
 import os
 from datetime import timedelta
 
@@ -15,6 +16,7 @@ default_args = {
     'email_on_retry': False,
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
+    'execution_timeout': timedelta(hours=2),
 }
 
 with DAG(
@@ -22,11 +24,21 @@ with DAG(
     default_args=default_args,
     description='Batch Feature Engineering for Fraud Detection (Daily)',
     schedule_interval='@daily',
-    start_date=days_ago(1),
+    start_date=pendulum.datetime(2025, 12, 30, tz="UTC"),
     tags=['mlops', 'spark', 'feature_engineering'],
     catchup=False,
     max_active_runs=1
 ) as dag:
+
+    wait_for_etl = ExternalTaskSensor(
+        task_id='wait_for_etl_completion',
+        external_dag_id='etl_paysim',
+        external_task_id='dbt_run',
+        execution_delta=timedelta(hours=1),
+        mode='poke',
+        timeout=3600,
+        poke_interval=300,
+    )
 
     extract_features = BashOperator(
         task_id='spark_batch_features',
@@ -34,20 +46,20 @@ with DAG(
         set -e
         echo "--------------------------------------------"
         echo "Running Batch Feature Extraction"
-        echo "Execution Date: {{{{ ds_nodash }}}}"
+        echo "Execution Date: {{{{ ds }}}}"
         echo "--------------------------------------------"
 
-        spark-submit \
-            --master {SPARK_MASTER} \
-            --driver-memory 2g \
-            --executor-memory 2g \
-            --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
-            --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
-            --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
-            --conf spark.hadoop.fs.s3a.access.key={os.getenv("MINIO_ROOT_USER", "minio_admin")} \
-            --conf spark.hadoop.fs.s3a.secret.key={os.getenv("MINIO_ROOT_PASSWORD", "minio_password")} \
-            --conf spark.hadoop.fs.s3a.path.style.access=true \
-            {FEATURE_SCRIPT_PATH} \
+        spark-submit \\
+            --master {SPARK_MASTER} \\
+            --driver-memory 2g \\
+            --executor-memory 2g \\
+            --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \\
+            --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \\
+            --conf spark.hadoop.fs.s3a.endpoint=$AWS_ENDPOINT_URL \\
+            --conf spark.hadoop.fs.s3a.access.key=$AWS_ACCESS_KEY_ID \\
+            --conf spark.hadoop.fs.s3a.secret.key=$AWS_SECRET_ACCESS_KEY \\
+            --conf spark.hadoop.fs.s3a.path.style.access=true \\
+            {FEATURE_SCRIPT_PATH} \\
             --execution_date {{{{ ds }}}}
         
         if [ $? -eq 0 ]; then
@@ -59,4 +71,4 @@ with DAG(
         """
     )
 
-    extract_features
+    wait_for_etl >> extract_features

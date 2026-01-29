@@ -17,11 +17,9 @@ merchant_stats as (
         sum(amount) as total_received_volume,
         sum(is_fraud) as fraud_received_count,
         count(distinct user_id) as unique_senders,
-        
-        -- Fraud Ratio
         sum(is_fraud) / count(*) as fraud_risk_ratio
     from fact
-    where is_merchant_dest = 1  -- Only loop at actual merchants (M)
+    where is_merchant_dest = 1 
     group by merchant_id
 )
 

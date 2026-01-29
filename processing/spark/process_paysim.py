@@ -1,6 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.functions import col, trim, current_timestamp, when, lit
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, TimestampType
 import argparse
 import os
 
@@ -13,6 +14,22 @@ MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minio_password")
 BUCKET_LANDING = os.getenv("MINIO_BUCKET_LANDING", "dl-landing-8f42a1")
 BUCKET_ANALYTICS = os.getenv("MINIO_BUCKET_ANALYTICS", "dl-analytics-g4igm3")
 
+# Explicit Schema for Landing Data (Bronze)
+LANDING_SCHEMA = StructType([
+    StructField("transaction_time", TimestampType(), True),
+    StructField("type", StringType(), True),
+    StructField("amount", DoubleType(), True),
+    StructField("nameOrig", StringType(), True),
+    StructField("oldbalanceOrg", DoubleType(), True),
+    StructField("newbalanceOrig", DoubleType(), True),
+    StructField("nameDest", StringType(), True),
+    StructField("oldbalanceDest", DoubleType(), True),
+    StructField("newbalanceDest", DoubleType(), True),
+    StructField("isFraud", IntegerType(), True),
+    StructField("isFlaggedFraud", IntegerType(), True),
+])
+
+
 def create_spark_session():
     spark = SparkSession.builder \
         .appName("PaySimProcessor") \
@@ -24,6 +41,7 @@ def create_spark_session():
         .getOrCreate()
     return spark
 
+
 def process_partition(spark, part_dt, part_hour):
     """
     Reads a specific partition from Landing, Clean & Transform, Write to Analytics.
@@ -34,10 +52,14 @@ def process_partition(spark, part_dt, part_hour):
     print(f"Reading from: {input_path}")
     
     try:
-        df = spark.read.parquet(input_path)
+        df = spark.read.schema(LANDING_SCHEMA).parquet(input_path)
+        row_count = df.count()
+        print(f"Loaded {row_count} rows from landing")
+        if row_count == 0:
+            raise ValueError(f"Empty partition: {input_path}")
     except Exception as e:
-        print(f"Partition not found or empty: {input_path}")
-        return
+        print(f"ERROR: Failed to read partition: {input_path}")
+        raise
 
     # --- 1. Bronze to Silver (Cleaning) ---
     print("Applying Cleaning logic...")
@@ -69,7 +91,6 @@ def process_partition(spark, part_dt, part_hour):
     df_features = df_features.withColumn("is_errorBalanceOrig", when(col("errorBalanceOrig") != 0, 1).otherwise(0)) \
                              .withColumn("is_errorBalanceDest", when(col("errorBalanceDest") != 0, 1).otherwise(0))
 
-
     # One-hot encoding
     df_features = df_features.withColumn("is_transfer", when(col("type") == "TRANSFER", 1).otherwise(0)) \
                              .withColumn("is_cash_out", when(col("type") == "CASH_OUT", 1).otherwise(0))
@@ -90,12 +111,18 @@ def process_partition(spark, part_dt, part_hour):
     # "Zero Init Orig": Origin had 0 balance before (Unusual?)
     df_features = df_features.withColumn("is_org_zero_init", when(col("oldbalanceOrg") == 0, 1).otherwise(0))
 
-    # --- 3. Write to Analytics (Partitioned by dt/hour) ---
+    # --- 3. Add partition columns ---
+    df_features = df_features.withColumn("part_dt", lit(part_dt)) \
+                             .withColumn("part_hour", lit(part_hour))
+
+    # --- 4. Write to Analytics (Partitioned by dt/hour) ---
     print(f"Writing to: {output_path}")
     
+    output_count = df_features.count()
     df_features.write.mode("overwrite").parquet(output_path)
     
-    print("Processing Complete.")
+    print(f"Processing Complete. Wrote {output_count} rows.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

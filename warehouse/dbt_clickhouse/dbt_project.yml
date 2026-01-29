@@ -1,4 +1,4 @@
-name: 'dbt_clickhouse'
+name: 'paysim_warehouse'
 version: '1.0.0'
 config-version: 2
 
@@ -17,19 +17,17 @@ clean-targets:
   - "dbt_packages"
 
 models:
-  dbt_clickhouse:
+  paysim_warehouse:
     materialized: view
     
     staging:
       materialized: view
       schema: staging
       
-    intermediate:
-      materialized: view
-      schema: intermediate
+    core:
+      materialized: table
+      schema: core
       
     marts:
       materialized: table
       schema: marts
-      clickhouse_engine: MergeTree()
-      clickhouse_partition_by: toYYYYMMDD(transaction_time)
