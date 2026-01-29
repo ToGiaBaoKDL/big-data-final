@@ -1,7 +1,13 @@
 include:
-  - compose/networks-volumes.yaml
-  - compose/platform.yaml
-  - compose/airflow.yaml
-  - compose/spark.yaml
-  - compose/mlflow.yaml
-  - compose/metabase.yaml
+  - path: compose/networks-volumes.yaml
+    env_file: .env
+  - path: compose/platform.yaml
+    env_file: .env
+  - path: compose/airflow.yaml
+    env_file: .env
+  - path: compose/spark.yaml
+    env_file: .env
+  - path: compose/mlflow.yaml
+    env_file: .env
+  - path: compose/metabase.yaml
+    env_file: .env

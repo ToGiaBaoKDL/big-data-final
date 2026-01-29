@@ -14,13 +14,13 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'True'
     AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: 'False'
-    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?AIRFLOW_FERNET_KEY must be set in .env}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
     
     # Database
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_POSTGRES_USER:-airflow}:${AIRFLOW_POSTGRES_PASSWORD:-airflow}@postgres/${AIRFLOW_POSTGRES_DB:-airflow}
     
     # Webserver
-    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-temporary_secret_key_change_me}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
     
     # Remote Logging
     AIRFLOW__LOGGING__REMOTE_LOGGING: 'True'
@@ -36,8 +36,11 @@ x-airflow-common: &airflow-common
     # ClickHouse Connection
     CLICKHOUSE_HOST: clickhouse
     CLICKHOUSE_PORT: 8123
-    CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse_admin}
+    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_password}
+
+    # Spark Config
+    SPARK_MASTER: spark://spark-master:7077
     
   volumes:
     - ../../orchestration/dags:/opt/airflow/dags

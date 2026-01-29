@@ -70,7 +70,7 @@ if __name__ == "__main__":
         ingest_partition(
             host=os.getenv("CLICKHOUSE_HOST", "clickhouse"),
             port=int(os.getenv("CLICKHOUSE_PORT", 8123)),
-            user=os.getenv("CLICKHOUSE_USER", "default"),
+            user=os.getenv("CLICKHOUSE_USER", "clickhouse_admin"),
             password=os.getenv("CLICKHOUSE_PASSWORD", ""),
             bucket=os.getenv("MINIO_BUCKET_ANALYTICS", "dl-analytics-8f42a1"),
             table=args.table,

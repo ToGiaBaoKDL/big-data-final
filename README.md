@@ -90,7 +90,7 @@ docker compose -f infrastructure/docker-compose.yml ps
 | **Metabase** | `localhost:3000` | (Setup) | (Setup) |
 | **MinIO** | `localhost:9001` | `minio_admin` | `minio_password` |
 | **Spark UI** | `localhost:9090` | - | - |
-| **ClickHouse** | `localhost:8123` | `default` | - |
+| **ClickHouse** | `localhost:8123` | `clickhouse_admin` | `clickhouse_password` |
 | **MLflow** | `localhost:5000` | `admin` | `password` |
 
 ### Run Pipeline

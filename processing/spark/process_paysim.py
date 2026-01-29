@@ -1,7 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.functions import col, trim, current_timestamp, when, lit
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, TimestampType
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, TimestampType, LongType
 import argparse
 import os
 
@@ -73,8 +73,8 @@ def process_partition(spark, part_dt, part_hour):
         col("nameDest").alias("merchant_id"),
         col("oldbalanceDest").cast("double"),
         col("newbalanceDest").cast("double"),
-        col("isFraud").cast("int"),
-        col("isFlaggedFraud").cast("int")
+        col("isFraud").cast("byte"),
+        col("isFlaggedFraud").cast("byte")
     )
     
     df_clean = df_clean.dropDuplicates()
@@ -87,29 +87,29 @@ def process_partition(spark, part_dt, part_hour):
     df_features = df_clean.withColumn("errorBalanceOrig", (col("oldbalanceOrg") - col("amount")) - col("newbalanceOrig")) \
                           .withColumn("errorBalanceDest", (col("oldbalanceDest") + col("amount")) - col("newbalanceDest"))
     
-    # Balance Error Flags
-    df_features = df_features.withColumn("is_errorBalanceOrig", when(col("errorBalanceOrig") != 0, 1).otherwise(0)) \
-                             .withColumn("is_errorBalanceDest", when(col("errorBalanceDest") != 0, 1).otherwise(0))
+    # Balance Error Flags (use byte for storage optimization)
+    df_features = df_features.withColumn("is_errorBalanceOrig", when(col("errorBalanceOrig") != 0, 1).otherwise(0).cast("byte")) \
+                             .withColumn("is_errorBalanceDest", when(col("errorBalanceDest") != 0, 1).otherwise(0).cast("byte"))
 
-    # One-hot encoding
-    df_features = df_features.withColumn("is_transfer", when(col("type") == "TRANSFER", 1).otherwise(0)) \
-                             .withColumn("is_cash_out", when(col("type") == "CASH_OUT", 1).otherwise(0))
+    # One-hot encoding (use byte for storage optimization)
+    df_features = df_features.withColumn("is_transfer", when(col("type") == "TRANSFER", 1).otherwise(0).cast("byte")) \
+                             .withColumn("is_cash_out", when(col("type") == "CASH_OUT", 1).otherwise(0).cast("byte"))
 
-    # Merchant Flag
-    df_features = df_features.withColumn("is_merchant_dest", when(col("merchant_id").startswith("M"), 1).otherwise(0))
+    # Merchant Flag (use byte for storage optimization)
+    df_features = df_features.withColumn("is_merchant_dest", when(col("merchant_id").startswith("M"), 1).otherwise(0).cast("byte"))
 
-    # Time Features (Stateless)
-    df_features = df_features.withColumn("hour_of_day", F.hour("transaction_time")) \
-                             .withColumn("day_of_week", F.dayofweek("transaction_time"))
+    # Time Features (use byte for storage optimization)
+    df_features = df_features.withColumn("hour_of_day", F.hour("transaction_time").cast("byte")) \
+                             .withColumn("day_of_week", F.dayofweek("transaction_time").cast("byte"))
 
-    # "Emptied Account": Amount equals old balance (User drained everything)
-    df_features = df_features.withColumn("is_all_orig_balance", when(col("amount") == col("oldbalanceOrg"), 1).otherwise(0))
+    # "Emptied Account": Amount equals old balance (use byte)
+    df_features = df_features.withColumn("is_all_orig_balance", when(col("amount") == col("oldbalanceOrg"), 1).otherwise(0).cast("byte"))
     
-    # "Zero Init Dest": Destination had 0 balance before (New account?)
-    df_features = df_features.withColumn("is_dest_zero_init", when(col("oldbalanceDest") == 0, 1).otherwise(0))
+    # "Zero Init Dest": Destination had 0 balance before (use byte)
+    df_features = df_features.withColumn("is_dest_zero_init", when(col("oldbalanceDest") == 0, 1).otherwise(0).cast("byte"))
     
-    # "Zero Init Orig": Origin had 0 balance before (Unusual?)
-    df_features = df_features.withColumn("is_org_zero_init", when(col("oldbalanceOrg") == 0, 1).otherwise(0))
+    # "Zero Init Orig": Origin had 0 balance before (use byte)
+    df_features = df_features.withColumn("is_org_zero_init", when(col("oldbalanceOrg") == 0, 1).otherwise(0).cast("byte"))
 
     # --- 3. Add partition columns ---
     df_features = df_features.withColumn("part_dt", lit(part_dt)) \

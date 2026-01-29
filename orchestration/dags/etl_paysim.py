@@ -1,6 +1,8 @@
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator, BranchPythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+from airflow.operators.empty import EmptyOperator
 from datetime import datetime, timedelta
 import pendulum
 import os
@@ -150,10 +152,31 @@ with DAG(
         env={
             "CLICKHOUSE_HOST": os.getenv("CLICKHOUSE_HOST", "clickhouse"),
             "CLICKHOUSE_PORT": os.getenv("CLICKHOUSE_PORT", "8123"),
-            "CLICKHOUSE_USER": os.getenv("CLICKHOUSE_USER", "default"),
+            "CLICKHOUSE_USER": os.getenv("CLICKHOUSE_USER", "clickhouse_admin"),
             "CLICKHOUSE_PASSWORD": os.getenv("CLICKHOUSE_PASSWORD", ""),
             "DBT_PROFILES_DIR": "/opt/airflow/warehouse/dbt_clickhouse"
         }
     )
 
-    generate_data >> process_data >> validate >> ingest >> dbt_run
+    def check_end_of_day(**context):
+        if context['execution_date'].hour == 23:
+            return 'trigger_ml_pipeline'
+        return 'end_pipeline'
+
+    check_ml_trigger = BranchPythonOperator(
+        task_id='check_end_of_day',
+        python_callable=check_end_of_day,
+    )
+
+    trigger_ml = TriggerDagRunOperator(
+        task_id='trigger_ml_pipeline',
+        trigger_dag_id='ml_extract_feature_paysim',
+        execution_date='{{ ds }}',
+        wait_for_completion=False,
+    )
+
+    end_pipeline = EmptyOperator(task_id='end_pipeline')
+
+    generate_data >> process_data >> validate >> ingest >> dbt_run >> check_ml_trigger
+    check_ml_trigger >> trigger_ml
+    check_ml_trigger >> end_pipeline

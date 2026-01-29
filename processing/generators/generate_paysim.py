@@ -220,9 +220,9 @@ def generate_step_data(step: int, base_rows: int):
     old_balance_dest = np.round(old_balance_dest, 2)
     new_balance_dest = np.round(new_balance_dest, 2)
     
-    # Initialize fraud columns
-    is_fraud = np.zeros(n_rows, dtype=int)
-    is_flagged_fraud = np.zeros(n_rows, dtype=int)
+    # Initialize fraud columns (use int8 for storage optimization)
+    is_fraud = np.zeros(n_rows, dtype=np.int8)
+    is_flagged_fraud = np.zeros(n_rows, dtype=np.int8)
     
     # Inject fraud - only for TRANSFER and CASH_OUT
     fraud_rate = get_fraud_rate_for_hour(hour)

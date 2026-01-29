@@ -22,24 +22,16 @@ default_args = {
 with DAG(
     dag_id=os.path.basename(__file__).replace(".py", ""),
     default_args=default_args,
-    description='Batch Feature Engineering for Fraud Detection (Daily)',
-    schedule_interval='@daily',
+    description='Batch Feature Engineering for Fraud Detection (Triggered by ETL)',
+    schedule_interval=None,
     start_date=pendulum.datetime(2025, 12, 30, tz="UTC"),
     tags=['mlops', 'spark', 'feature_engineering'],
     catchup=False,
     max_active_runs=1
 ) as dag:
 
-    wait_for_etl = ExternalTaskSensor(
-        task_id='wait_for_etl_completion',
-        external_dag_id='etl_paysim',
-        external_task_id='dbt_run',
-        execution_delta=timedelta(hours=1),
-        mode='poke',
-        timeout=3600,
-        poke_interval=300,
-    )
-
+    # No sensor needed - DAG is triggered explicitly by ETL pipeline
+    
     extract_features = BashOperator(
         task_id='spark_batch_features',
         bash_command=f"""
@@ -68,7 +60,10 @@ with DAG(
             echo "Feature Extraction Failed"
             exit 1
         fi
-        """
+        """,
+        env={
+            "AWS_ENDPOINT_URL": os.getenv("MINIO_ENDPOINT", "http://minio:9000"),
+            "AWS_ACCESS_KEY_ID": os.getenv("MINIO_ROOT_USER", "minio_admin"),
+            "AWS_SECRET_ACCESS_KEY": os.getenv("MINIO_ROOT_PASSWORD", "minio_password"),
+        }
     )
-
-    wait_for_etl >> extract_features

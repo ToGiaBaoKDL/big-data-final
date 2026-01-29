@@ -1,7 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, TimestampType
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, TimestampType, ByteType
 import argparse
 import os
 from datetime import datetime
@@ -16,6 +16,7 @@ BUCKET_ANALYTICS = os.getenv("MINIO_BUCKET_ANALYTICS", "dl-analytics-g4igm3")
 BUCKET_DATASCIENCE = os.getenv("MINIO_BUCKET_DATASCIENCE", "dl-datascience-gii2ij")
 
 # Explicit Schema for robustness
+# Note: process_paysim outputs ByteType (Int8) for all flag columns
 ANALYTICS_SCHEMA = StructType([
     StructField("transaction_time", TimestampType(), True),
     StructField("type", StringType(), True),
@@ -26,20 +27,20 @@ ANALYTICS_SCHEMA = StructType([
     StructField("merchant_id", StringType(), True),
     StructField("oldbalanceDest", DoubleType(), True),
     StructField("newbalanceDest", DoubleType(), True),
-    StructField("isFraud", IntegerType(), True),
-    StructField("isFlaggedFraud", IntegerType(), True),
+    StructField("isFraud", ByteType(), True),
+    StructField("isFlaggedFraud", ByteType(), True),
     StructField("errorBalanceOrig", DoubleType(), True),
     StructField("errorBalanceDest", DoubleType(), True),
-    StructField("is_errorBalanceOrig", IntegerType(), True),
-    StructField("is_errorBalanceDest", IntegerType(), True),
-    StructField("is_transfer", IntegerType(), True),
-    StructField("is_cash_out", IntegerType(), True),
-    StructField("is_merchant_dest", IntegerType(), True),
-    StructField("hour_of_day", IntegerType(), True),
-    StructField("day_of_week", IntegerType(), True),
-    StructField("is_all_orig_balance", IntegerType(), True),
-    StructField("is_dest_zero_init", IntegerType(), True),
-    StructField("is_org_zero_init", IntegerType(), True),
+    StructField("is_errorBalanceOrig", ByteType(), True),
+    StructField("is_errorBalanceDest", ByteType(), True),
+    StructField("is_transfer", ByteType(), True),
+    StructField("is_cash_out", ByteType(), True),
+    StructField("is_merchant_dest", ByteType(), True),
+    StructField("hour_of_day", ByteType(), True),
+    StructField("day_of_week", ByteType(), True),
+    StructField("is_all_orig_balance", ByteType(), True),
+    StructField("is_dest_zero_init", ByteType(), True),
+    StructField("is_org_zero_init", ByteType(), True),
     StructField("processed_at", TimestampType(), True),
     StructField("part_dt", StringType(), True),
     StructField("part_hour", StringType(), True),
