@@ -133,8 +133,10 @@ with DAG(
             --part_hour $PART_HOUR
         """,
         env={
-            "CLICKHOUSE_HOST": "clickhouse",
-            "CLICKHOUSE_PORT": "8123"
+            "CLICKHOUSE_HOST": os.getenv("CLICKHOUSE_HOST", "clickhouse"),
+            "CLICKHOUSE_PORT": os.getenv("CLICKHOUSE_PORT", "8123"),
+            "CLICKHOUSE_USER": os.getenv("CLICKHOUSE_USER", "clickhouse_admin"),
+            "CLICKHOUSE_PASSWORD": os.getenv("CLICKHOUSE_PASSWORD", "clickhouse_password"),
         }
     )
 
@@ -153,7 +155,7 @@ with DAG(
             "CLICKHOUSE_HOST": os.getenv("CLICKHOUSE_HOST", "clickhouse"),
             "CLICKHOUSE_PORT": os.getenv("CLICKHOUSE_PORT", "8123"),
             "CLICKHOUSE_USER": os.getenv("CLICKHOUSE_USER", "clickhouse_admin"),
-            "CLICKHOUSE_PASSWORD": os.getenv("CLICKHOUSE_PASSWORD", ""),
+            "CLICKHOUSE_PASSWORD": os.getenv("CLICKHOUSE_PASSWORD", "clickhouse_password"),
             "DBT_PROFILES_DIR": "/opt/airflow/warehouse/dbt_clickhouse"
         }
     )
