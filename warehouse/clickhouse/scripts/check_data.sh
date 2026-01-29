@@ -77,6 +77,6 @@ run_query "Counting rows in paysim_txn" "SELECT count() as total_rows FROM ${CLI
 
 # Check 4
 print_header "4. Data Sample"
-run_query "Fetching 1 sample row" "SELECT * FROM ${CLICKHOUSE_DB:-finance_dw}.paysim_txn LIMIT 1 FORMAT Vertical"
+run_query "Fetching 1 sample row" "SELECT * FROM ${CLICKHOUSE_DB:-finance_dw}.paysim_txn LIMIT 20 FORMAT Vertical"
 
 echo -e "${GREEN}Check Completed Successfully.${NC}\n"

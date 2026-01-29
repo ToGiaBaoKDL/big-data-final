@@ -111,7 +111,7 @@ with DAG(
         echo "--------------------------------------------"
         
         python3 /opt/airflow/plugins/utils/validate_minio.py \
-            --bucket {os.getenv('MINIO_BUCKET_ANALYTICS', 'dl-analytics-8f42a1')} \
+            --bucket {os.getenv('MINIO_BUCKET_ANALYTICS', 'dl-analytics-g4igm3')} \
             --prefix ".warehouse/paysim_txn/part_dt=$PART_DT/part_hour=$PART_HOUR/"
         """,
     )
@@ -144,6 +144,7 @@ with DAG(
         task_id='dbt_run',
         bash_command=f"""
         set -e
+        export PATH=$PATH:/home/airflow/.local/bin
         echo "--------------------------------------------"
         echo "Running dbt transformations"
         echo "--------------------------------------------"
