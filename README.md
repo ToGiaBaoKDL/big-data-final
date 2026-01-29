@@ -39,9 +39,9 @@ generate_data → process_data → validate → ingest_to_clickhouse → dbt_run
 
 ### 2. ML Pipeline (`ml_extract_feature_paysim`) - Daily
 ```
-wait_for_etl → spark_batch_features
+spark_batch_features
 ```
-- Waits for ETL completion (ExternalTaskSensor)
+- Triggered by ETL completion (TriggerDagRunOperator)
 - Calculates window-based ML features (1h, 24h velocity)
 - Saves to Feature Store
 
@@ -70,63 +70,114 @@ wait_for_etl → spark_batch_features
 - Docker & Docker Compose
 - 4GB+ RAM available
 
-### Setup
+### 1. Environment Setup
 ```bash
-# 1. Clone and configure
-cp infrastructure/.env.example infrastructure/.env
+# Clone the repository
+git clone https://github.com/ToGiaBaoKDL/big-data-final.git
+cd big-data-final
 
-# 2. Start services
+# Create environment file from example
+cp infrastructure/.env.example infrastructure/.env
+```
+
+### 2. Start Infrastructure
+```bash
+# Start all services in detached mode
 docker compose -f infrastructure/docker-compose.yml up -d
 
-# 3. Wait for services to be healthy (~2-3 min)
+# Check service health (wait 2-3 mins for 'healthy' status)
 docker compose -f infrastructure/docker-compose.yml ps
 ```
 
-### Access Services
+### 3. Data Initialization
+You can initialize the system with historical data using the `init` mode. This loads data from a CSV file (e.g., Kaggle PaySim dataset) into the Data Lake.
 
-| Service | URL | User | Password |
-|---------|-----|------|----------|
-| **Airflow** | `localhost:8080` | `admin` | `admin_password` |
-| **Metabase** | `localhost:3000` | (Setup) | (Setup) |
-| **MinIO** | `localhost:9001` | `minio_admin` | `minio_password` |
-| **Spark UI** | `localhost:9090` | - | - |
-| **ClickHouse** | `localhost:8123` | `clickhouse_admin` | `clickhouse_password` |
-| **MLflow** | `localhost:5000` | `admin` | `password` |
+**Option A: Run inside config container (Recommended)**
+```bash
+# 1. Ensure your CSV file is available (e.g., in data/paysim.csv)
+# 2. Exec into the Airflow Scheduler container
+docker exec -it infrastructure-airflow-scheduler-1 bash
 
-### Run Pipeline
-1. Open Airflow at http://localhost:8080
-2. Enable and trigger `etl_paysim` DAG
-3. After 24h of data, enable `ml_extract_feature_paysim`
+# 3. Run the init script
+python3 /opt/airflow/processing/generators/generate_paysim.py init --file /opt/airflow/data/paysim.csv
+```
+*Note: Make sure `data/` volume is mounted or file is accessible.*
+
+**Option B: Monthly/Hourly Generation**
+- The system is designed to generate synthetic data automatically via Airflow.
+- Simply enabling the `etl_paysim` DAG will start generating hourly data.
+
+### 4. Running the Pipeline
+The core logic is orchestrated by **Airflow**.
+
+1.  **Access Airflow**: [http://localhost:8080](http://localhost:8080)
+    *   User: `admin`
+    *   Password: `admin_password`
+2.  **Trigger ETL**:
+    *   Find DAG `etl_paysim`.
+    *   Toggle the **ON** switch.
+    *   (Optional) Click "Trigger DAG" for an immediate run.
+3.  **Check Results**:
+    *   **MinIO** ([localhost:9001](http://localhost:9001)): Check buckets `dl-landing`, `dl-analytics`.
+    *   **ClickHouse** ([localhost:8123](http://localhost:8123)): Query `warehouse.fact_transactions`.
+
+### 5. Metabase Setup (BI Dashboard)
+Metabase is used for visualizing the fraud insights.
+
+1.  **Access Metabase**: [http://localhost:3000](http://localhost:3000)
+2.  **Initial Setup**: Follow the on-screen setup (Account creation).
+3.  **Add Data Source**:
+    *   **Database Type**: ClickHouse (See note below*)
+    *   **Name**: `Fraud Warehouse`
+    *   **Host**: `clickhouse` (Service name in Docker network)
+    *   **Port**: `8123`
+    *   **Database Name**: `default` (or `warehouse` if configured)
+    *   **Username**: `clickhouse_admin`
+    *   **Password**: `clickhouse_password`
+4.  **Explore**: Use the query builder or write SQL to analyze `warehouse.fact_transactions`.
+
+*> Note: If ClickHouse is not listed, you may need to add the clickhouse driver manually or use a Metabase image that includes it.*
 
 ## Project Structure
 
 ```
-├── infrastructure/          # Docker Compose & configs
-│   ├── compose/            # Service YAML files
-│   ├── docker/             # Dockerfiles
-│   └── scripts/            # Init scripts
-├── orchestration/          # Airflow
-│   ├── dags/               # DAG definitions
-│   └── plugins/            # Utilities
-├── processing/             # Data processing
-│   ├── generators/         # PaySim data generator
-│   └── spark/              # Spark ETL scripts
-└── warehouse/              # Serving layer
-    ├── clickhouse/         # SQL migrations
-    ├── dbt_clickhouse/     # dbt project
-    └── ingestion/          # S3 → ClickHouse loaders
+├── infrastructure/         # Infrastructure-as-Code
+│   ├── compose/            # Modular Docker Compose files
+│   ├── docker/             # Custom Docker images (Airflow, Spark, etc.)
+│   └── scripts/            # Initialization scripts (Postgres, MinIO)
+│
+├── orchestration/          # Airflow DAGs & Logic
+│   ├── dags/               # ETL & ML Pipeline definitions
+│   └── plugins/            # Shared utilities (Utils, Hooks)
+│
+├── processing/             # Data Processing (Spark/Python)
+│   ├── generators/         # Synthetic Data Generator (PaySim)
+│   └── spark/              # Spark Jobs (Cleaning, Feature Eng)
+│
+├── warehouse/              # Data Warehouse (ClickHouse & dbt)
+│   ├── clickhouse/         # DDLs & Migrations
+│   ├── dbt_clickhouse/     # dbt Project (Transformation Layer)
+│   └── ingestion/          # Scripts to load data from S3 -> ClickHouse
+│
+├── data/                   # Local data directory (ignored by git)
 ```
 
-## Development
+## Development & Debugging
 
 ### Run dbt locally
+Execute dbt commands from within the `warehouse/dbt_clickhouse` directory:
 ```bash
 cd warehouse/dbt_clickhouse
-dbt run --profiles-dir .
-dbt test --profiles-dir .
+dbt run --profiles-dir .   # Build models
+dbt test --profiles-dir .  # Run data tests
 ```
 
-### Check source freshness
-```bash
-dbt source freshness --profiles-dir .
-```
+### Accessing Interfaces
+| Service | URL | Credentials (User/Pass) |
+|---------|-----|-------------------------|
+| **Airflow** | http://localhost:8080 | `admin` / `admin_password` |
+| **Metabase** | http://localhost:3000 | *(Setup Required)* |
+| **MinIO** | http://localhost:9001 | `minio_admin` / `minio_password` |
+| **Spark Master** | http://localhost:9090 | - |
+| **ClickHouse** | http://localhost:8123 | `clickhouse_admin` / `clickhouse_password` |
+| **MLflow** | http://localhost:5000 | `admin` / `password` |

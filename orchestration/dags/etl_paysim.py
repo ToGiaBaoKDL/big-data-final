@@ -1,6 +1,6 @@
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator, BranchPythonOperator
+from airflow.decorators import task
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.operators.empty import EmptyOperator
 from datetime import datetime, timedelta
@@ -161,15 +161,13 @@ with DAG(
         }
     )
 
+    @task.branch(task_id='check_end_of_day')
     def check_end_of_day(**context):
         if context['execution_date'].hour == 23:
             return 'trigger_ml_pipeline'
         return 'end_pipeline'
 
-    check_ml_trigger = BranchPythonOperator(
-        task_id='check_end_of_day',
-        python_callable=check_end_of_day,
-    )
+    check_ml_trigger = check_end_of_day()
 
     trigger_ml = TriggerDagRunOperator(
         task_id='trigger_ml_pipeline',
