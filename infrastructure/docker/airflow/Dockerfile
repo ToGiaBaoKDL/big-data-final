@@ -9,9 +9,9 @@ RUN apt-get update && \
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
-COPY --chown=airflow:root pyproject.toml /tmp/
+COPY --chown=airflow:root pyproject.toml /tmp/install/
 
 USER airflow
 
-WORKDIR /tmp
+WORKDIR /tmp/install
 RUN pip install --no-cache-dir .
