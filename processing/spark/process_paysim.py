@@ -166,9 +166,10 @@ def process_partition(spark, part_dt, part_hour):
         df_features.write.mode("overwrite").partitionBy("part_dt", "part_hour").parquet(output_path)
         print("Processing Complete (bulk mode - count skipped for performance).")
     else:
-        # Incremental mode - can afford to count
+        # Incremental mode - overwrite entire partition for idempotency
+        # This ensures if we reprocess the same hour, we don't get duplicates
         output_count = df_features.count()
-        print("Writing directly to partition path (no re-partitioning)...")
+        print("Writing directly to partition path (overwrite mode for idempotency)...")
         df_features.write.mode("overwrite").parquet(output_path)
         print(f"Processing Complete. Wrote {output_count} rows.")
 

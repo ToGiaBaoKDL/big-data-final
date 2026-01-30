@@ -134,11 +134,10 @@ docker compose -f infrastructure/docker-compose.yml ps
 Place your CSV file in the `data/` directory, then run the init workflow:
 
 ```bash
-# Step 1: Generate to Landing layer
-docker exec infrastructure-airflow-webserver-1 \
-    python3 /opt/airflow/processing/generators/generate_paysim.py init --file /opt/airflow/data/paysim.csv
+# Step 1: Generate to Landing layer (runs LOCAL on host machine)
+python3 processing/generators/generate_paysim.py init --file data/paysim.csv
 
-# Step 2: Process to Analytics layer
+# Step 2: Process to Analytics layer (uses SPARK cluster resources)
 docker cp processing/spark/process_paysim.py infrastructure-spark-master-1:/opt/spark/jobs/
 docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     --master spark://spark-master:7077 \
@@ -151,16 +150,15 @@ docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     --conf spark.hadoop.fs.s3a.path.style.access=true \
     /opt/spark/jobs/process_paysim.py --mode init
 
-# Step 3: Load to ClickHouse
-docker cp warehouse/clickhouse/clickhouse_loader.py infrastructure-airflow-webserver-1:/opt/airflow/jobs/
-docker exec infrastructure-airflow-webserver-1 \
-    python3 /opt/airflow/jobs/clickhouse_loader.py --mode init
+# Step 3: Load to ClickHouse (runs LOCAL on host machine)
+python3 warehouse/clickhouse/clickhouse_loader.py --mode init
 
-# Step 4: Run dbt transformations
-docker exec infrastructure-airflow-webserver-1 \
-    bash -c "cd /opt/airflow/warehouse/dbt_clickhouse && dbt run --profiles-dir ."
+# Step 4: Run dbt transformations (runs LOCAL on host machine)
+cd warehouse/dbt_clickhouse
+dbt run --profiles-dir .
+cd ../..
 
-# Step 5 (Optional): Extract ML features for training
+# Step 5 (Optional): Extract ML features for training (uses SPARK cluster resources)
 docker cp processing/spark/extract_feature_paysim.py infrastructure-spark-master-1:/opt/spark/jobs/
 docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     --master spark://spark-master:7077 \
@@ -206,6 +204,39 @@ docker exec infrastructure-clickhouse-1 clickhouse-client --query "
 ```
 
 **After init, the DAGs handle incremental processing automatically.**
+
+---
+
+## Idempotency & Data Consistency
+
+All pipeline components implement idempotency to ensure reprocessing the same data produces consistent results without duplicates:
+
+### Generator (Landing Layer)
+- **Strategy**: Delete-then-insert at file level
+- **Implementation**: Checks if file exists, removes it before uploading new version
+- **Safe to retry**: Yes, same step can be regenerated
+
+### Spark Processing (Analytics Layer)  
+- **Strategy**: Overwrite entire partition
+- **Implementation**: `write.mode("overwrite")` replaces all files in partition
+- **Safe to retry**: Yes, reprocessing replaces old data completely
+- **Note**: One partition = one hour. Multiple batches in same hour will be merged by Spark's overwrite
+
+### ClickHouse Loader (Warehouse Layer)
+- **Strategy**: Delete-then-insert at partition level
+- **Implementation**: `ALTER TABLE DELETE WHERE part_dt=X AND part_hour=Y` before INSERT
+- **Safe to retry**: Yes, partition is cleared before loading
+- **Init mode**: Truncates entire table before bulk load
+
+### dbt Transformations (Mart Layer)
+- **Strategy**: Delete+insert on unique_key
+- **Implementation**: `incremental_strategy='delete+insert'` with `unique_key='txn_id'`
+- **Safe to retry**: Yes, conflicts resolved by unique key
+- **Incremental filter**: Only processes new partitions based on `max(part_dt || part_hour)`
+
+**Result**: You can safely rerun any step without worrying about data duplication.
+
+---
 
 ### 4. Running the Pipeline
 The core logic is orchestrated by **Airflow**.

@@ -118,7 +118,10 @@ def ingest_partition(client, bucket, table, part_dt, part_hour):
         '{secret_key}',
         'Parquet'
     )
-    SETTINGS input_format_allow_errors_ratio=0.1
+    SETTINGS 
+        input_format_allow_errors_ratio=0.1,
+        max_memory_usage=1000000000,
+        max_threads=2
     """
     
     print(f"Executing Ingestion Query for {part_dt}/{part_hour}...")
@@ -164,6 +167,10 @@ if __name__ == "__main__":
         
         if args.mode == "init":
             print("INIT MODE: Loading data partition by partition to avoid OOM")
+            
+            # Truncate table for clean init (idempotency)
+            print(f"TRUNCATING table {args.table} for clean init...")
+            client.command(f"TRUNCATE TABLE {args.table}")
             
             # Get list of unique partitions from S3
             list_query = f"""

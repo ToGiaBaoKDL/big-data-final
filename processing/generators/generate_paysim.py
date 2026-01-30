@@ -556,7 +556,10 @@ def generate_step_data(step: int, base_rows: int):
     return df
 
 def generate_incremental_batch(base_rows: int, start_step: int):
-    """Generates 1 step và upload lên MinIO."""
+    """Generates 1 step và upload lên MinIO.
+    
+    Idempotency: Nếu file đã tồn tại, xóa trước khi upload lại.
+    """
     print(f"Generating data for Step {start_step}...")
     
     client = get_minio_client()
@@ -567,6 +570,14 @@ def generate_incremental_batch(base_rows: int, start_step: int):
     
     filename = f"paysim_step{start_step}.parquet"
     object_name = f".warehouse/paysim_txn/part_dt={part_dt}/part_hour={part_hour}/{filename}"
+    
+    # Check if file already exists - delete for idempotency
+    try:
+        client.stat_object(BUCKET_LANDING, object_name)
+        print(f"  -> File exists, removing for idempotency: {object_name}")
+        client.remove_object(BUCKET_LANDING, object_name)
+    except Exception:
+        pass  # File doesn't exist, that's fine
     
     buffer = io.BytesIO()
     df.write_parquet(buffer)
