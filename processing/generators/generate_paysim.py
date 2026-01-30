@@ -288,6 +288,10 @@ def process_initial_load(source_file):
                 (pl.col("part_dt") == part_dt) & (pl.col("part_hour") == part_hour)
             )
             
+            # Remove partition columns from data (Hive-style partitioning: columns in path, not in file)
+            # This is consistent with Spark's partitionBy() behavior
+            partition_df = partition_df.drop(["part_dt", "part_hour"])
+            
             # Convert to parquet in memory
             buffer = io.BytesIO()
             partition_df.write_parquet(buffer)
@@ -565,8 +569,12 @@ def generate_incremental_batch(base_rows: int, start_step: int):
     client = get_minio_client()
     df = generate_step_data(start_step, base_rows)
     
+    # Extract partition info before dropping columns
     part_dt = df["part_dt"][0]
     part_hour = df["part_hour"][0]
+    
+    # Remove partition columns from data (Hive-style partitioning: columns in path, not in file)
+    df = df.drop(["part_dt", "part_hour"])
     
     filename = f"paysim_step{start_step}.parquet"
     object_name = f".warehouse/paysim_txn/part_dt={part_dt}/part_hour={part_hour}/{filename}"
@@ -614,8 +622,12 @@ if __name__ == "__main__":
         elif args.mode == "generate":
             if args.local:
                 df = generate_step_data(args.step, args.rows)
+                # Extract partition info before dropping columns
                 part_dt = df["part_dt"][0]
                 part_hour = df["part_hour"][0]
+                
+                # Remove partition columns from data (Hive-style partitioning)
+                df = df.drop(["part_dt", "part_hour"])
                 
                 local_path = f"sample_data/dl-landing/.warehouse/paysim_txn/part_dt={part_dt}/part_hour={part_hour}"
                 os.makedirs(local_path, exist_ok=True)

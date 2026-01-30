@@ -101,11 +101,15 @@ with DAG(
             --conf spark.hadoop.fs.s3a.access.key=${{MINIO_ROOT_USER}} \
             --conf spark.hadoop.fs.s3a.secret.key=${{MINIO_ROOT_PASSWORD}} \
             --conf spark.hadoop.fs.s3a.path.style.access=true \
+            --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
+            --conf spark.hadoop.fs.s3a.multiobjectdelete.enable=true \
+            --conf spark.hadoop.fs.s3a.buffer.dir=/tmp/spark-s3a \
+            --conf spark.hadoop.fs.s3a.fast.upload=true \
+            --conf spark.hadoop.fs.s3a.fast.upload.buffer=bytebuffer \
+            --conf spark.eventLog.enabled=false \
             --conf spark.sql.shuffle.partitions=50 \
-            --conf spark.eventLog.enabled=true \
-            --conf spark.eventLog.dir=s3a://${{MINIO_BUCKET_LOGS:-dl-logs-3e91b5}}/spark-events/ \
-            --conf spark.hadoop.fs.s3a.committer.name=directory \
-            --conf spark.hadoop.fs.s3a.committer.staging.tmp.path=/tmp/spark-staging \
+            --conf spark.ui.showConsoleProgress=true \
+            --conf spark.sql.sources.partitionOverwriteMode=dynamic \
             {SPARK_PROCESSOR_PATH} \
             --mode incremental \
             --part_dt $PART_DT \

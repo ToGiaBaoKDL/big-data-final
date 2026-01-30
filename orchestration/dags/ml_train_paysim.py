@@ -1,11 +1,14 @@
 """
 ML Training DAG for PaySim Fraud Detection.
-Triggered after feature extraction completes, or manually.
+Optional pipeline - disabled by default.
 
 Features:
 - Trains model using PySpark ML (LogisticRegression, RandomForest, GBT)
 - Logs experiments to MLflow
 - Registers model in MLflow Model Registry
+
+Usage:
+  airflow dags trigger ml_train_paysim --conf '{"model_type": "lr", "run_date": "2026-01-30"}'
 """
 from airflow import DAG
 from airflow.operators.bash import BashOperator
@@ -46,26 +49,28 @@ with DAG(
     max_active_runs=1,
     tags=['mlops', 'training', 'mlflow'],
     params={
-        'model_type': 'lr',   # lr, rf, gbt
-        'run_date': None,     # Feature snapshot date (default: execution_date)
-        'register_model': True,
+        'model_type': 'lr',      # Model type: lr, rf, gbt
+        'run_date': None,        # Feature snapshot date (default: ds/execution_date)
+        'register_model': True,  # Register model in MLflow registry
+        'tune': False,           # Enable hyperparameter tuning (slower but better)
     },
     doc_md="""
     ## ML Training Pipeline (PySpark ML)
     
-    **Triggers:**
-    - Manual: Trigger with params `{"model_type": "lr", "run_date": "2026-01-30"}`
-    - After feature extraction DAG
+    **Manual Trigger:**
+    ```bash
+    airflow dags trigger ml_train_paysim --conf '{"model_type": "lr", "run_date": "2026-01-30", "tune": true}'
+    ```
     
     **Model Types:**
-    - `lr`: Logistic Regression
-    - `rf`: Random Forest
-    - `gbt`: Gradient Boosted Trees
+    - `lr`: Logistic Regression (fast, good baseline)
+    - `rf`: Random Forest (slower, better accuracy)
+    - `gbt`: Gradient Boosted Trees (slowest, best accuracy)
     
     **Outputs:**
-    - Model logged to MLflow
-    - Metrics tracked in MLflow experiments
-    - Model registered in Model Registry (if enabled)
+    - Model logged to MLflow: http://localhost:5000
+    - Metrics: AUC-ROC, AUC-PR, Precision, Recall, F1
+    - Model Registry: Auto-register if `register_model=True`
     """,
 ) as dag:
 
@@ -99,18 +104,20 @@ with DAG(
         MODEL_TYPE="{{{{ params.model_type or 'lr' }}}}"
         RUN_DATE="{{{{ params.run_date or ds }}}}"
         REGISTER="{{{{ params.register_model }}}}"
+        TUNE="{{{{ params.tune }}}}"
         BUCKET="${{MINIO_BUCKET_DATASCIENCE}}"
         
-        echo "Training PySpark ML Model"
-        echo "Model Type: $MODEL_TYPE"
-        echo "Run Date: $RUN_DATE"
-        echo "Feature Store: s3a://$BUCKET/paysim_features"
+        echo "Training: model=$MODEL_TYPE, date=$RUN_DATE, tune=$TUNE, register=$REGISTER"
         
-        ARGS="--model $MODEL_TYPE --save-model --tune"
-        ARGS="$ARGS --data-path s3a://$BUCKET/paysim_features"
+        # Build arguments for train_spark.py
+        ARGS="--model $MODEL_TYPE --save-model"
         
         if [ -n "$RUN_DATE" ] && [ "$RUN_DATE" != "None" ]; then
             ARGS="$ARGS --run-date $RUN_DATE"
+        fi
+        
+        if [ "$TUNE" = "True" ]; then
+            ARGS="$ARGS --tune"
         fi
         
         if [ "$REGISTER" = "True" ]; then

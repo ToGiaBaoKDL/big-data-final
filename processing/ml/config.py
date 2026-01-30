@@ -39,22 +39,11 @@ FEATURE_COLS = [
     "is_transfer",
     "is_cash_out",
     
-    # Account state flags (strong fraud indicators)
-    "is_all_orig_balance",      # Emptied account
-    "is_dest_zero_init",        # New destination
-    "is_org_zero_init",         # New origin
-    
-    # Balance errors
-    "errorBalanceOrig",
-    "errorBalanceDest",
-    "is_errorBalanceOrig",
-    "is_errorBalanceDest",
-    
-    # Time delta features
+    # Time delta features (velocity)
     "orig_delta_seconds",
     "dest_delta_seconds",
     
-    # Destination window features
+    # Destination window features (velocity)
     "dest_msg_count_1h",
     "dest_amount_sum_1h",
     "dest_msg_count_24h",
@@ -63,7 +52,7 @@ FEATURE_COLS = [
     "dest_sum_amount_past",
     "dest_history_fraud_count",
     
-    # Origin window features
+    # Origin window features (velocity)
     "orig_msg_count_1h",
     "orig_amount_sum_1h",
     "orig_msg_count_24h",
@@ -74,9 +63,7 @@ FEATURE_COLS = [
     "orig_avg_amount_past",
     "orig_history_fraud_count",
     
-    # Derived ratio features
-    "amount_ratio_to_balance",
-    "balance_remaining_pct",
+    # Pattern features
     "is_round_amount"
 ]
 

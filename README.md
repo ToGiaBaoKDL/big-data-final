@@ -40,12 +40,11 @@ generate_data → process_data → validate → ingest_to_clickhouse → dbt_run
 
 ### 2. ML Feature Extraction (`ml_extract_feature_paysim`) - Daily
 ```
-spark_batch_features → validate_features → (optional: trigger training)
+spark_batch_features → validate_features → end
 ```
 - Triggered by ETL at 23:00 daily
 - Calculates window-based ML features (1h, 24h velocity)
 - Saves to Feature Store (dl-datascience bucket)
-- Can optionally trigger training after extraction
 
 ### 3. ML Training Pipeline (`ml_train_paysim`) - On-Demand
 ```
@@ -63,14 +62,12 @@ All DAGs support manual trigger with custom parameters:
 # ETL DAG - trigger for specific hour
 airflow dags trigger etl_paysim --conf '{"execution_date": "2026-01-30T10:00:00+00:00"}'
 
-# ML Feature Extraction - with auto-training
+# ML Feature Extraction - extract features for specific date
 airflow dags trigger ml_extract_feature_paysim --conf '{
-  "execution_date": "2026-01-30",
-  "trigger_training": true,
-  "model_type": "xgb"
+  "execution_date": "2026-01-30"
 }'
 
-# ML Training - specific model and date
+# ML Training (Optional) - specific model and date
 airflow dags trigger ml_train_paysim --conf '{
   "model_type": "xgb",
   "run_date": "2026-01-30",
@@ -151,14 +148,15 @@ docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     /opt/spark/jobs/process_paysim.py --mode init
 
 # Step 3: Load to ClickHouse (runs LOCAL on host machine)
-python3 warehouse/clickhouse/clickhouse_loader.py --mode init
+CLICKHOUSE_HOST=localhost CLICKHOUSE_PASSWORD=clickhouse_password \
+    python3 warehouse/clickhouse/clickhouse_loader.py --mode init
 
 # Step 4: Run dbt transformations (runs LOCAL on host machine)
 cd warehouse/dbt_clickhouse
 dbt run --profiles-dir .
 cd ../..
 
-# Step 5 (Optional): Extract ML features for training (uses SPARK cluster resources)
+# Step 5 (Optional): Extract ML features (uses SPARK cluster resources)
 docker cp processing/spark/extract_feature_paysim.py infrastructure-spark-master-1:/opt/spark/jobs/
 docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     --master spark://spark-master:7077 \
@@ -248,7 +246,7 @@ The core logic is orchestrated by **Airflow**.
 2.  **Enable DAGs**:
     *   **`etl_paysim`**: Hourly ETL (generate → process → ingest → dbt)
     *   **`ml_extract_feature_paysim`**: Daily feature extraction (triggered at 23:00 by ETL)
-    *   **`ml_train_paysim`**: On-demand ML training (manual trigger)
+    *   **`ml_train_paysim`**: ML training (optional, manual trigger only)
     
 3.  **Trigger Options**:
     *   **Auto**: Toggle DAG ON for scheduled runs
@@ -326,4 +324,3 @@ Metabase is used for visualizing the fraud insights.
 | **Spark Master** | http://localhost:9090 | - |
 | **ClickHouse** | http://localhost:8123 | `clickhouse_admin` / `clickhouse_password` |
 | **MLflow** | http://localhost:5000 | `admin` / `password` |
-

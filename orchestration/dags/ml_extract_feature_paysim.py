@@ -39,14 +39,16 @@ with DAG(
     doc_md="""
     ## ML Feature Extraction Pipeline
     
+    **Purpose:** Extract window-based features for fraud detection and save to Feature Store.
+    
     **Modes:**
     - Triggered by ETL at 23:00 daily
-    - Manual: `{"execution_date": "2026-01-30", "trigger_training": true}`
+    - Manual: `{"execution_date": "2026-01-30"}`
     
     **Params:**
-    - `execution_date`: Feature snapshot date
-    - `trigger_training`: If true, triggers ML training after extraction
-    - `model_type`: Model type for training (xgb, rf, lr)
+    - `execution_date`: Feature snapshot date (default: execution_date/ds)
+    - `trigger_training`: Set to true to auto-trigger ML training (default: False)
+    - `model_type`: Model type for training if triggered (xgb, rf, lr)
     
     **Output:** Feature store in dl-datascience bucket
     """,
@@ -75,11 +77,14 @@ with DAG(
             --conf spark.hadoop.fs.s3a.access.key=${{MINIO_ROOT_USER}} \
             --conf spark.hadoop.fs.s3a.secret.key=${{MINIO_ROOT_PASSWORD}} \
             --conf spark.hadoop.fs.s3a.path.style.access=true \
+            --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
+            --conf spark.hadoop.fs.s3a.multiobjectdelete.enable=true \
+            --conf spark.hadoop.fs.s3a.buffer.dir=/tmp/spark-s3a \
+            --conf spark.hadoop.fs.s3a.fast.upload=true \
+            --conf spark.hadoop.fs.s3a.fast.upload.buffer=bytebuffer \
+            --conf spark.eventLog.enabled=false \
             --conf spark.sql.shuffle.partitions=50 \
-            --conf spark.eventLog.enabled=true \
-            --conf spark.eventLog.dir=s3a://${{MINIO_BUCKET_LOGS:-dl-logs-3e91b5}}/spark-events/ \
-            --conf spark.hadoop.fs.s3a.committer.name=directory \
-            --conf spark.hadoop.fs.s3a.committer.staging.tmp.path=/tmp/spark-staging \
+            --conf spark.ui.showConsoleProgress=true \
             {FEATURE_SCRIPT_PATH} \
             --mode incremental \
             --execution_date $EXEC_DATE

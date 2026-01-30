@@ -62,7 +62,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${CLICKHOUSE_MEM_LIMIT:-4G}
+          memory: ${CLICKHOUSE_MEM_LIMIT:-8G}
     ports:
       - "8123:8123"
       - "9005:9000"

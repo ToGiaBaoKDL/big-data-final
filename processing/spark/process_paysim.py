@@ -39,6 +39,8 @@ def create_spark_session():
     else:
         print("Running via SPARK-SUBMIT - using configs from command line")
     
+    builder = builder.config("spark.sql.sources.partitionOverwriteMode", "dynamic")
+    
     spark = builder.getOrCreate()
     return spark
 
@@ -47,21 +49,31 @@ def process_partition(spark, part_dt, part_hour):
     """
     Reads a specific partition from Landing, Clean & Transform, Write to Analytics.
     If part_dt="all", reads recursively and preserves partition structure.
+    
+    IMPORTANT: Uses Hive-style partitioning consistently:
+    - Partition columns are in PATH, not in parquet files
+    - Uses basePath for reading to infer partition columns
+    - Uses partitionBy for writing (removes columns from file, puts in path)
     """
+    # Base path for partition discovery (Hive-style)
+    landing_base_path = f"s3a://{BUCKET_LANDING}/.warehouse/paysim_txn"
+    analytics_base_path = f"s3a://{BUCKET_ANALYTICS}/.warehouse/paysim_txn"
+    
     if part_dt == "all":
-        input_path = f"s3a://{BUCKET_LANDING}/.warehouse/paysim_txn/"
-        output_path = f"s3a://{BUCKET_ANALYTICS}/.warehouse/paysim_txn/"
+        input_path = f"{landing_base_path}/part_dt=*/part_hour=*"
+        output_path = analytics_base_path
         print("Running in BULK MODE (ALL partitions)")
-        use_partition_by = True
     else:
-        input_path = f"s3a://{BUCKET_LANDING}/.warehouse/paysim_txn/part_dt={part_dt}/part_hour={part_hour}"
-        output_path = f"s3a://{BUCKET_ANALYTICS}/.warehouse/paysim_txn/part_dt={part_dt}/part_hour={part_hour}"
-        use_partition_by = False
+        input_path = f"{landing_base_path}/part_dt={part_dt}/part_hour={part_hour}"
+        output_path = analytics_base_path
+        print(f"Running in INCREMENTAL MODE (partition: {part_dt}/{part_hour})")
     
     print(f"Reading from: {input_path}")
     
     try:
-        df = spark.read.parquet(input_path)
+        # Use basePath to infer partition columns from path (Hive-style partitioning)
+        # Partition columns (part_dt, part_hour) are NOT in parquet files, only in directory structure
+        df = spark.read.option("basePath", landing_base_path).parquet(input_path)
         
         if part_dt != "all":
             row_count = df.count()
@@ -97,10 +109,12 @@ def process_partition(spark, part_dt, part_hour):
         col("isFlaggedFraud").cast("byte")
     ]
     
-    if part_dt == "all":
-        if "part_dt" in df.columns and "part_hour" in df.columns:
-            select_cols.append(col("part_dt"))
-            select_cols.append(col("part_hour"))
+    # Add partition columns (inferred from path by Spark with basePath option)
+    # These are IntegerType by default from Hive-style partitioning
+    if "part_dt" in df.columns:
+        select_cols.append(col("part_dt"))
+    if "part_hour" in df.columns:
+        select_cols.append(col("part_hour"))
     
     df_clean = df.select(*select_cols)
     
@@ -144,34 +158,35 @@ def process_partition(spark, part_dt, part_hour):
     # "Zero Init Orig": Origin had 0 balance before (use byte)
     df_features = df_features.withColumn("is_org_zero_init", when(col("oldbalanceOrg") == 0, 1).otherwise(0).cast("byte"))
 
-    # --- 3. Add partition columns (Only if not already present from bulk read) ---
+    # --- 3. Prepare partition columns for write ---
+    # Spark inferred part_dt and part_hour as IntegerType from path
+    # We need to convert them to String for consistent partitionBy() behavior
     if part_dt != "all":
+        # Incremental mode: add partition columns as strings (from arguments)
         df_features = df_features.withColumn("part_dt", lit(part_dt)) \
                                  .withColumn("part_hour", lit(part_hour))
     else:
-        df_features = df_features.withColumn(
-            "part_hour", 
-            lpad(col("part_hour").cast("string"), 2, "0")
-        )
+        # Bulk mode: convert existing integer partition columns to string with zero-padding
+        df_features = df_features.withColumn("part_dt", col("part_dt").cast("string")) \
+                                 .withColumn("part_hour", lpad(col("part_hour").cast("string"), 2, "0"))
 
-    # --- 4. Write to Analytics ---
+    # --- 4. Write to Analytics (always use partitionBy for Hive-style consistency) ---
     print(f"Writing to: {output_path}")
     
-    # Optimize partitions for bulk write
     if part_dt == "all":
-        # Repartition for efficient write (200 partitions for large dataset)
+        # Bulk mode: repartition for efficient write
         print("Repartitioning for optimized bulk write...")
         df_features = df_features.repartition(200, "part_dt", "part_hour")
-        print("Writing with partitionBy (preserving partition structure)...")
+        print("Writing with partitionBy (Hive-style: columns in path, not in file)...")
         df_features.write.mode("overwrite").partitionBy("part_dt", "part_hour").parquet(output_path)
-        print("Processing Complete (bulk mode - count skipped for performance).")
+        print("Processing Complete (bulk mode).")
     else:
-        # Incremental mode - overwrite entire partition for idempotency
-        # This ensures if we reprocess the same hour, we don't get duplicates
+        # Incremental mode: write to specific partition
+        # partitionBy ensures partition columns are in PATH, not in parquet file
         output_count = df_features.count()
-        print("Writing directly to partition path (overwrite mode for idempotency)...")
-        df_features.write.mode("overwrite").parquet(output_path)
-        print(f"Processing Complete. Wrote {output_count} rows.")
+        print(f"Writing with partitionBy to specific partition (Hive-style)...")
+        df_features.write.mode("overwrite").partitionBy("part_dt", "part_hour").parquet(output_path)
+        print(f"Processing Complete. Wrote {output_count} rows to partition {part_dt}/{part_hour}.")
 
 
 if __name__ == "__main__":
@@ -202,4 +217,12 @@ if __name__ == "__main__":
         raise
     finally:
         if spark:
-            spark.stop()
+            print("Graceful shutdown: stopping SparkSession...")
+            try:
+                # Give executors time to finish cleanup
+                import time
+                time.sleep(2)
+                spark.stop()
+                print("SparkSession stopped successfully.")
+            except Exception as stop_err:
+                print(f"Warning during shutdown (can be ignored): {stop_err}")

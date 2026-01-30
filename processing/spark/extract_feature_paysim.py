@@ -9,8 +9,6 @@ import sys
 import traceback
 from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../ml'))
-from config import TRAINING_WINDOW_DAYS
 
 # Env Config
 MINIO_ENDPOINT = os.getenv("AWS_ENDPOINT_URL", "http://minio:9000")
@@ -22,6 +20,8 @@ BUCKET_ANALYTICS = os.getenv("MINIO_BUCKET_ANALYTICS", "dl-analytics-g4igm3")
 BUCKET_DATASCIENCE = os.getenv("MINIO_BUCKET_DATASCIENCE", "dl-datascience-gii2ij")
 
 # Explicit Schema for robustness
+# NOTE: part_dt/part_hour are NOT included - they come from directory path (Hive-style partitioning)
+# Spark infers them as IntegerType from path pattern: /part_dt=20251228/part_hour=00/
 ANALYTICS_SCHEMA = StructType([
     StructField("transaction_time", TimestampType(), True),
     StructField("type", StringType(), True),
@@ -47,9 +47,10 @@ ANALYTICS_SCHEMA = StructType([
     StructField("is_dest_zero_init", ByteType(), True),
     StructField("is_org_zero_init", ByteType(), True),
     StructField("processed_at", TimestampType(), True),
-    StructField("part_dt", StringType(), True),
-    StructField("part_hour", StringType(), True),
 ])
+
+# Base path for partition discovery
+ANALYTICS_BASE_PATH = f"s3a://{BUCKET_ANALYTICS}/.warehouse/paysim_txn"
 
 
 def create_spark_session():
@@ -82,36 +83,53 @@ def process_batch_features(spark, execution_date):
     """Reads history with rolling window, calculates Window Features for ML."""
     
     # Determine date range for reading
+    # NOTE: part_dt is INTEGER (e.g., 20251228) inferred from path by Spark
     if execution_date and execution_date != "init":
         exec_dt = datetime.strptime(execution_date, "%Y-%m-%d")
-        cutoff_part_dt = exec_dt.strftime("%Y%m%d")
+        cutoff_part_dt = int(exec_dt.strftime("%Y%m%d"))  # Integer for partition filter
         
         # Use centralized config for training window
-        start_dt = exec_dt - timedelta(days=TRAINING_WINDOW_DAYS)
-        start_part_dt = start_dt.strftime("%Y%m%d")
+        start_dt = exec_dt - timedelta(days=90)  # 90-day rolling window
+        start_part_dt = int(start_dt.strftime("%Y%m%d"))  # Integer for partition filter
         
         # Build path pattern for partition pruning
-        input_path = f"s3a://{BUCKET_ANALYTICS}/.warehouse/paysim_txn/part_dt=*/part_hour=*"
+        input_path = f"{ANALYTICS_BASE_PATH}/part_dt=*/part_hour=*"
         print(f"Reading from: {input_path}")
-        print(f"ROLLING WINDOW: {start_part_dt} <= part_dt <= {cutoff_part_dt} ({TRAINING_WINDOW_DAYS} days)")
+        print(f"ROLLING WINDOW: {start_part_dt} <= part_dt <= {cutoff_part_dt} ({90} days)")
         print(f"  → Production best practice: prevents concept drift")
     else:
         # Init mode - read all data
-        input_path = f"s3a://{BUCKET_ANALYTICS}/.warehouse/paysim_txn/part_dt=*/part_hour=*"
+        input_path = f"{ANALYTICS_BASE_PATH}/part_dt=*/part_hour=*"
         print(f"INIT MODE: Reading all available data from: {input_path}")
         start_part_dt = None
         cutoff_part_dt = None
     
     try:
-        # Use explicit schema for robustness
-        df = spark.read.schema(ANALYTICS_SCHEMA).parquet(input_path)
+        # Use explicit schema for data columns, basePath for partition discovery
+        # basePath tells Spark where the partition columns start in the path
+        df = spark.read.schema(ANALYTICS_SCHEMA) \
+            .option("basePath", ANALYTICS_BASE_PATH) \
+            .parquet(input_path)
         
         # Apply rolling window filter (Spark's partition pruning optimizes this)
+        # part_dt is INTEGER type (inferred from path), so use integer comparison
         if start_part_dt and cutoff_part_dt:
             df = df.filter(
                 (F.col("part_dt") >= start_part_dt) & 
                 (F.col("part_dt") <= cutoff_part_dt)
             )
+            
+            # Verify partition count
+            distinct_partitions = df.select("part_dt").distinct().collect()
+            partition_count = len(distinct_partitions)
+            print(f"PARTITION VERIFICATION: Found {partition_count} distinct part_dt values")
+            if partition_count > 0:
+                dates = sorted([r["part_dt"] for r in distinct_partitions])
+                print(f"  → Actual date range: {dates[0]} to {dates[-1]}")
+            if partition_count < 90:
+                print(f"  → WARNING: Expected up to {90} days, got {partition_count}")
+                print(f"  → This is OK if data doesn't span full window yet")
+            print(f"  → Filter range: {start_part_dt} to {cutoff_part_dt}")
         
         if execution_date == "init":
             print("INIT MODE: Optimizing for large dataset processing")
@@ -176,36 +194,29 @@ def process_batch_features(spark, execution_date):
         .withColumn("orig_avg_amount_past", F.avg("amount").over(w_orig_past)) \
         .withColumn("orig_history_fraud_count", F.sum("isFraud").over(w_orig_past)) \
         \
-        .withColumn("amount_ratio_to_balance", 
-            F.when(F.col("oldbalanceOrg") > 0, F.col("amount") / F.col("oldbalanceOrg")).otherwise(F.lit(999.0))) \
-        .withColumn("balance_remaining_pct",
-            F.when(F.col("oldbalanceOrg") > 0, F.col("newbalanceOrig") / F.col("oldbalanceOrg")).otherwise(F.lit(0.0))) \
         .withColumn("is_night_txn", F.when((F.col("hour_of_day") >= 22) | (F.col("hour_of_day") <= 6), 1).otherwise(0)) \
         .withColumn("is_round_amount", F.when(F.col("amount") % 1000 == 0, 1).otherwise(0)) \
         .withColumn("amount_log", F.log1p("amount"))
 
-    # Select final columns for Feature Store (drop part_dt, part_hour to avoid nested partitions)
+    # Select final columns for Feature Store
     final_df = features_df.select(
         "transaction_time", "user_id", "merchant_id", "amount", "type", 
         F.col("isFraud").alias("is_fraud"),
-        "hour_of_day", "day_of_week", "is_all_orig_balance", "is_dest_zero_init", "is_org_zero_init",
-        "is_transfer", "is_cash_out", "errorBalanceOrig", "errorBalanceDest",
-        "is_errorBalanceOrig", "is_errorBalanceDest",
+        "hour_of_day", "day_of_week",
+        "is_transfer", "is_cash_out",
         # Time delta features
         "orig_delta_seconds", "dest_delta_seconds",
         # Destination window features
         "dest_msg_count_1h", "dest_amount_sum_1h",
         "dest_msg_count_24h", "dest_amount_sum_24h",
         "dest_count_past", "dest_sum_amount_past", "dest_history_fraud_count",
-        # Origin window features (NEW)
+        # Origin window features
         "orig_msg_count_1h", "orig_amount_sum_1h",
         "orig_msg_count_24h", "orig_amount_sum_24h",
         "orig_prev_amount", "orig_count_past", "orig_sum_amount_past", 
         "orig_avg_amount_past", "orig_history_fraud_count",
-        # Ratio & derived features (NEW)
-        "amount_ratio_to_balance", "balance_remaining_pct",
+        # Pattern & derived features
         "is_night_txn", "is_round_amount", "amount_log"
-        # Note: part_dt, part_hour removed to avoid nested partitions
     )
 
     # Unpersist cached data
@@ -221,7 +232,7 @@ def process_batch_features(spark, execution_date):
         print("INIT MODE: Optimizing write with repartition...")
         final_df = final_df.repartition(50)
         final_df.write.mode("overwrite").parquet(output_path)
-        print("Batch Feature Engineering Complete (bulk mode - count skipped for performance).")
+        print("Batch Feature Engineering Complete (bulk mode).")
     else:
         # Incremental mode - coalesce to reduce file count
         output_count = final_df.cache().count()
@@ -253,4 +264,12 @@ if __name__ == "__main__":
         raise
     finally:
         if spark:
-            spark.stop()
+            print("Graceful shutdown: stopping SparkSession...")
+            try:
+                # Give executors time to finish cleanup
+                import time
+                time.sleep(2)
+                spark.stop()
+                print("SparkSession stopped successfully.")
+            except Exception as stop_err:
+                print(f"Warning during shutdown (can be ignored): {stop_err}")
