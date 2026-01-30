@@ -3,15 +3,13 @@ ML Training DAG for PaySim Fraud Detection.
 Triggered after feature extraction completes, or manually.
 
 Features:
-- Trains model using sklearn/XGBoost or PySpark ML
+- Trains model using PySpark ML (LogisticRegression, RandomForest, GBT)
 - Logs experiments to MLflow
 - Registers model in MLflow Model Registry
 """
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.empty import EmptyOperator
-from airflow.sensors.external_task import ExternalTaskSensor
 import pendulum
 import os
 from datetime import timedelta
@@ -48,22 +46,21 @@ with DAG(
     max_active_runs=1,
     tags=['mlops', 'training', 'mlflow'],
     params={
-        'model_type': 'xgb',  # xgb, rf, lr
+        'model_type': 'lr',   # lr, rf, gbt
         'run_date': None,     # Feature snapshot date (default: execution_date)
-        'use_spark': False,   # Use PySpark ML instead of sklearn
         'register_model': True,
     },
     doc_md="""
-    ## ML Training Pipeline
+    ## ML Training Pipeline (PySpark ML)
     
     **Triggers:**
-    - Manual: Trigger with params `{"model_type": "xgb", "run_date": "2026-01-30"}`
+    - Manual: Trigger with params `{"model_type": "lr", "run_date": "2026-01-30"}`
     - After feature extraction DAG
     
     **Model Types:**
-    - `xgb`: XGBoost (recommended for fraud)
-    - `rf`: Random Forest
     - `lr`: Logistic Regression
+    - `rf`: Random Forest
+    - `gbt`: Gradient Boosted Trees
     
     **Outputs:**
     - Model logged to MLflow
@@ -92,53 +89,7 @@ with DAG(
         env=MLFLOW_ENV,
     )
 
-    # Branch: Spark ML or sklearn
-    def choose_training_method(**context):
-        use_spark = context['params'].get('use_spark', False)
-        if use_spark:
-            return 'train_spark_ml'
-        return 'train_sklearn'
-
-    branch_training = BranchPythonOperator(
-        task_id="branch_training",
-        python_callable=choose_training_method,
-    )
-
-    # Option 1: Train with sklearn/XGBoost
-    train_sklearn = BashOperator(
-        task_id="train_sklearn",
-        bash_command=f"""
-        set -e
-        export PATH=$PATH:/home/airflow/.local/bin
-        
-        MODEL_TYPE="{{{{ params.model_type or 'xgb' }}}}"
-        RUN_DATE="{{{{ params.run_date or ds }}}}"
-        REGISTER="{{{{ params.register_model }}}}"
-        BUCKET="${{MINIO_BUCKET_DATASCIENCE}}"
-        
-        echo "Training sklearn Model"
-        echo "Model Type: $MODEL_TYPE"
-        echo "Run Date: $RUN_DATE (feature snapshot date)"
-        echo "Feature Store: s3a://$BUCKET/paysim_features"
-        
-        cd {ML_SCRIPT_PATH}
-        
-        ARGS="--model $MODEL_TYPE --save-model"
-        ARGS="$ARGS --data-path s3a://$BUCKET/paysim_features"
-        ARGS="$ARGS --run-date $RUN_DATE"  # Always pass run_date
-        
-        if [ "$REGISTER" = "True" ]; then
-            ARGS="$ARGS --register"
-        fi
-        
-        python train_sklearn.py $ARGS
-        
-        echo "Training complete!"
-        """,
-        env=MLFLOW_ENV,
-    )
-
-    # Option 2: Train with PySpark ML
+    # Train with PySpark ML
     train_spark_ml = BashOperator(
         task_id="train_spark_ml",
         bash_command=f"""
@@ -148,12 +99,15 @@ with DAG(
         MODEL_TYPE="{{{{ params.model_type or 'lr' }}}}"
         RUN_DATE="{{{{ params.run_date or ds }}}}"
         REGISTER="{{{{ params.register_model }}}}"
+        BUCKET="${{MINIO_BUCKET_DATASCIENCE}}"
         
         echo "Training PySpark ML Model"
         echo "Model Type: $MODEL_TYPE"
-        echo "Run Date: ${{RUN_DATE:-all}}"
+        echo "Run Date: $RUN_DATE"
+        echo "Feature Store: s3a://$BUCKET/paysim_features"
         
         ARGS="--model $MODEL_TYPE --save-model --tune"
+        ARGS="$ARGS --data-path s3a://$BUCKET/paysim_features"
         
         if [ -n "$RUN_DATE" ] && [ "$RUN_DATE" != "None" ]; then
             ARGS="$ARGS --run-date $RUN_DATE"
@@ -182,12 +136,6 @@ with DAG(
         env=MLFLOW_ENV,
     )
 
-    # Join point
-    training_complete = EmptyOperator(
-        task_id="training_complete",
-        trigger_rule="one_success"
-    )
-
     # Log to MLflow that training finished
     log_completion = BashOperator(
         task_id="log_completion",
@@ -200,7 +148,4 @@ with DAG(
     )
 
     # DAG flow
-    start >> validate_features >> branch_training
-    branch_training >> train_sklearn >> training_complete
-    branch_training >> train_spark_ml >> training_complete
-    training_complete >> log_completion
+    start >> validate_features >> train_spark_ml >> log_completion

@@ -49,12 +49,11 @@ spark_batch_features → validate_features → (optional: trigger training)
 
 ### 3. ML Training Pipeline (`ml_train_paysim`) - On-Demand
 ```
-validate_features → branch → [train_sklearn | train_spark_ml] → log_completion
+validate_features → train_spark_ml → log_completion
 ```
-- Trains fraud detection models (XGBoost, Random Forest, Logistic Regression)
+- Trains fraud detection models using PySpark ML (Logistic Regression, Random Forest, GBT)
 - Logs experiments to MLflow
 - Registers models in MLflow Model Registry
-- Supports both sklearn and PySpark ML
 
 ### Manual Trigger with Parameters
 
@@ -129,27 +128,18 @@ docker compose -f infrastructure/docker-compose.yml ps
 ```
 
 ### 3. Data Initialization
-You can initialize the system with historical data using the `init` mode. This loads data from a CSV file (e.g., Kaggle PaySim dataset) into the Data Lake.
 
-**Option 1: Init from CSV (Kaggle Dataset)**
+**Option 1: Init from CSV (Kaggle PaySim Dataset)**
+
+Place your CSV file in the `data/` directory, then run the init workflow:
 
 ```bash
-# 1. Place your CSV file in the data/ directory
-cp /path/to/paysim.csv data/paysim.csv
+# Step 1: Generate to Landing layer
+docker exec infrastructure-airflow-webserver-1 \
+    python3 /opt/airflow/processing/generators/generate_paysim.py init --file /opt/airflow/data/paysim.csv
 
-# 2. Exec into the Airflow container
-docker exec -it infrastructure-airflow-webserver-1 bash
-
-# 3. Run init workflow
-# Step 1: Load CSV to Landing (Bronze)
-python3 jobs/generate_paysim.py init --file /opt/airflow/data/paysim.csv
-
-# Step 2: Process ALL data to Analytics (Silver) via Spark
-# Copy updated processor to Spark container first
-exit  # Exit Airflow container
+# Step 2: Process to Analytics layer
 docker cp processing/spark/process_paysim.py infrastructure-spark-master-1:/opt/spark/jobs/
-
-# Run Spark job from host
 docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     --master spark://spark-master:7077 \
     --driver-memory 2g --executor-memory 2g \
@@ -161,16 +151,16 @@ docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     --conf spark.hadoop.fs.s3a.path.style.access=true \
     /opt/spark/jobs/process_paysim.py --mode init
 
-# Step 3: Ingest ALL to ClickHouse
-# Copy loader to Airflow first
+# Step 3: Load to ClickHouse
 docker cp warehouse/clickhouse/clickhouse_loader.py infrastructure-airflow-webserver-1:/opt/airflow/jobs/
-docker exec infrastructure-airflow-webserver-1 python3 jobs/clickhouse_loader.py --mode init
+docker exec infrastructure-airflow-webserver-1 \
+    python3 /opt/airflow/jobs/clickhouse_loader.py --mode init
 
 # Step 4: Run dbt transformations
-docker exec infrastructure-airflow-webserver-1 bash -c \
-    "cd warehouse/dbt_clickhouse && dbt run --profiles-dir ."
+docker exec infrastructure-airflow-webserver-1 \
+    bash -c "cd /opt/airflow/warehouse/dbt_clickhouse && dbt run --profiles-dir ."
 
-# Step 5: Extract ML features (optional, for training later)
+# Step 5 (Optional): Extract ML features for training
 docker cp processing/spark/extract_feature_paysim.py infrastructure-spark-master-1:/opt/spark/jobs/
 docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     --master spark://spark-master:7077 \
@@ -184,9 +174,30 @@ docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     /opt/spark/jobs/extract_feature_paysim.py --mode init
 ```
 
-**Option 2: Skip CSV Init - Use Synthetic Data**
+**Option 2: Synthetic Data Generation (No CSV Required)**
 
-If you don't have a CSV file, simply enable the DAGs for automatic synthetic data generation:
+Skip init and let the DAGs generate data automatically:
+
+```bash
+# 1. Access Airflow UI: http://localhost:8080 (admin/admin_password)
+# 2. Toggle ON the etl_paysim DAG
+# 3. It will generate hourly synthetic transactions automatically
+```
+
+**Verification:**
+
+```bash
+# Check MinIO buckets
+open http://localhost:9001  # User: minio_admin, Pass: minio_password
+
+# Query ClickHouse
+docker exec infrastructure-clickhouse-1 clickhouse-client --query "
+    SELECT count(*) as total_rows, 
+           sum(isFraud) as frauds,
+           100.0 * sum(isFraud) / count(*) as fraud_rate_pct
+    FROM finance_dw.paysim_txn
+"
+```
 
 ```bash
 # Access Airflow UI at http://localhost:8080 (admin/admin_password)
@@ -265,7 +276,7 @@ Metabase is used for visualizing the fraud insights.
 ├── processing/             # Data Processing & ML
 │   ├── generators/         # Synthetic Data Generator (PaySim)
 │   ├── spark/              # Spark Jobs (ETL, Feature Engineering)
-│   └── ml/                 # ML Training Scripts (sklearn, PySpark ML)
+│   └── ml/                 # ML Training Scripts (PySpark ML)
 │
 ├── warehouse/              # Data Warehouse Layer
 │   ├── clickhouse/         # DDLs, Migrations, Loader Scripts
