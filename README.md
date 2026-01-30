@@ -156,7 +156,7 @@ cd warehouse/dbt_clickhouse
 dbt run --profiles-dir .
 cd ../..
 
-# Step 5 (Optional): Extract ML features (uses SPARK cluster resources)
+# Step 5: Extract ML features (uses SPARK cluster resources)
 docker cp processing/spark/extract_feature_paysim.py infrastructure-spark-master-1:/opt/spark/jobs/
 docker exec infrastructure-spark-master-1 /opt/spark/bin/spark-submit \
     --master spark://spark-master:7077 \

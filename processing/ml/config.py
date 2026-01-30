@@ -22,7 +22,7 @@ RANDOM_SEED = 42
 
 # Training window configuration
 # Options: 30 (fast iteration), 90 (balanced), 180 (stable patterns)
-TRAINING_WINDOW_DAYS = 90 
+TRAINING_WINDOW_DAYS = 30 
 
 # Features for ML training
 FEATURE_COLS = [

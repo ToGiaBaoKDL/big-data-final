@@ -69,8 +69,15 @@ with DAG(
 
         spark-submit \\
             --master {SPARK_MASTER} \\
-            --driver-memory 2g \\
-            --executor-memory 2g \\
+            --driver-memory 1g \\
+            --executor-memory 1g \\
+            --conf spark.driver.maxResultSize=512m \\
+            --conf spark.sql.shuffle.partitions=20 \\
+            --conf spark.default.parallelism=20 \\
+            --conf spark.memory.fraction=0.8 \\
+            --conf spark.memory.storageFraction=0.3 \\
+            --conf spark.sql.adaptive.enabled=true \\
+            --conf spark.sql.adaptive.coalescePartitions.enabled=true \\
             --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \\
             --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
             --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
@@ -83,7 +90,6 @@ with DAG(
             --conf spark.hadoop.fs.s3a.fast.upload=true \
             --conf spark.hadoop.fs.s3a.fast.upload.buffer=bytebuffer \
             --conf spark.eventLog.enabled=false \
-            --conf spark.sql.shuffle.partitions=50 \
             --conf spark.ui.showConsoleProgress=true \
             {FEATURE_SCRIPT_PATH} \
             --mode incremental \

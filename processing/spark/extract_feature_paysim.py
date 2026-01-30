@@ -89,13 +89,13 @@ def process_batch_features(spark, execution_date):
         cutoff_part_dt = int(exec_dt.strftime("%Y%m%d"))  # Integer for partition filter
         
         # Use centralized config for training window
-        start_dt = exec_dt - timedelta(days=90)  # 90-day rolling window
+        start_dt = exec_dt - timedelta(days=30)  # 30-day rolling window
         start_part_dt = int(start_dt.strftime("%Y%m%d"))  # Integer for partition filter
         
         # Build path pattern for partition pruning
         input_path = f"{ANALYTICS_BASE_PATH}/part_dt=*/part_hour=*"
         print(f"Reading from: {input_path}")
-        print(f"ROLLING WINDOW: {start_part_dt} <= part_dt <= {cutoff_part_dt} ({90} days)")
+        print(f"ROLLING WINDOW: {start_part_dt} <= part_dt <= {cutoff_part_dt} ({30} days)")
         print(f"  → Production best practice: prevents concept drift")
     else:
         # Init mode - read all data
@@ -126,8 +126,8 @@ def process_batch_features(spark, execution_date):
             if partition_count > 0:
                 dates = sorted([r["part_dt"] for r in distinct_partitions])
                 print(f"  → Actual date range: {dates[0]} to {dates[-1]}")
-            if partition_count < 90:
-                print(f"  → WARNING: Expected up to {90} days, got {partition_count}")
+            if partition_count < 30:
+                print(f"  → WARNING: Expected up to {30} days, got {partition_count}")
                 print(f"  → This is OK if data doesn't span full window yet")
             print(f"  → Filter range: {start_part_dt} to {cutoff_part_dt}")
         
@@ -140,12 +140,13 @@ def process_batch_features(spark, execution_date):
             print(f"Data exists (sample: {sample_count} rows). Processing full dataset...")
             df = df.persist(StorageLevel.DISK_ONLY)
         else:
-            df = df.cache()
             row_count = df.count()
             print(f"Loaded {row_count} rows from analytics layer (filtered)")
             if row_count == 0:
                 print("WARNING: No data found in analytics layer. Exiting.")
                 return
+            print("Using DISK_ONLY storage for 30-day rolling window to prevent OOM")
+            df = df.persist(StorageLevel.DISK_ONLY)
     except Exception as e:
         print(f"Error reading data: {e}")
         raise 
@@ -169,11 +170,11 @@ def process_batch_features(spark, execution_date):
     w_orig_1h = Window.partitionBy("user_id").orderBy("ts_seconds").rangeBetween(-3600, -1)
     w_orig_24h = Window.partitionBy("user_id").orderBy("ts_seconds").rangeBetween(-86400, -1)
 
-    print("Calculating Window Features...")
+    print("Calculating Window Features (split into stages to manage memory)...")
     
-    features_df = df \
-        .withColumn("orig_prev_tx_time", F.lag("transaction_time").over(w_orig)) \
-        .withColumn("orig_delta_seconds", F.col("ts_seconds") - F.col("orig_prev_tx_time").cast("long")) \
+    # Stage 1: Destination features
+    print("  Stage 1/3: Calculating destination window features...")
+    df = df \
         .withColumn("dest_prev_tx_time", F.lag("transaction_time").over(w_dest)) \
         .withColumn("dest_delta_seconds", F.col("ts_seconds") - F.col("dest_prev_tx_time").cast("long")) \
         .withColumn("dest_msg_count_1h", F.count("*").over(w_dest_1h)) \
@@ -182,8 +183,13 @@ def process_batch_features(spark, execution_date):
         .withColumn("dest_amount_sum_24h", F.sum("amount").over(w_dest_24h)) \
         .withColumn("dest_count_past", F.count("*").over(w_dest_past)) \
         .withColumn("dest_sum_amount_past", F.sum("amount").over(w_dest_past)) \
-        .withColumn("dest_history_fraud_count", F.sum("isFraud").over(w_dest_past)) \
-        \
+        .withColumn("dest_history_fraud_count", F.sum("isFraud").over(w_dest_past))
+    
+    # Stage 2: Origin features
+    print("  Stage 2/3: Calculating origin window features...")
+    df = df \
+        .withColumn("orig_prev_tx_time", F.lag("transaction_time").over(w_orig)) \
+        .withColumn("orig_delta_seconds", F.col("ts_seconds") - F.col("orig_prev_tx_time").cast("long")) \
         .withColumn("orig_msg_count_1h", F.count("*").over(w_orig_1h)) \
         .withColumn("orig_amount_sum_1h", F.sum("amount").over(w_orig_1h)) \
         .withColumn("orig_msg_count_24h", F.count("*").over(w_orig_24h)) \
@@ -192,8 +198,11 @@ def process_batch_features(spark, execution_date):
         .withColumn("orig_count_past", F.count("*").over(w_orig_past)) \
         .withColumn("orig_sum_amount_past", F.sum("amount").over(w_orig_past)) \
         .withColumn("orig_avg_amount_past", F.avg("amount").over(w_orig_past)) \
-        .withColumn("orig_history_fraud_count", F.sum("isFraud").over(w_orig_past)) \
-        \
+        .withColumn("orig_history_fraud_count", F.sum("isFraud").over(w_orig_past))
+    
+    # Stage 3: Simple features
+    print("  Stage 3/3: Calculating pattern features...")
+    features_df = df \
         .withColumn("is_night_txn", F.when((F.col("hour_of_day") >= 22) | (F.col("hour_of_day") <= 6), 1).otherwise(0)) \
         .withColumn("is_round_amount", F.when(F.col("amount") % 1000 == 0, 1).otherwise(0)) \
         .withColumn("amount_log", F.log1p("amount"))
@@ -234,12 +243,13 @@ def process_batch_features(spark, execution_date):
         final_df.write.mode("overwrite").parquet(output_path)
         print("Batch Feature Engineering Complete (bulk mode).")
     else:
-        # Incremental mode - coalesce to reduce file count
-        output_count = final_df.cache().count()
-        print(f"Coalescing to 5 files for incremental write (daily data is small)...")
-        final_df = final_df.coalesce(5)
+        # Incremental mode - use repartition for 30-day window
+        output_count = final_df.count()
+        print(f"Total rows: {output_count:,}")
+        print(f"Repartitioning to 10 files for 30-day window write...")
+        final_df = final_df.repartition(10)
         final_df.write.mode("overwrite").parquet(output_path)
-        print(f"Batch Feature Engineering Complete. Wrote {output_count} rows to 5 files.")
+        print(f"Batch Feature Engineering Complete. Wrote {output_count:,} rows.")
 
 
 if __name__ == "__main__":
