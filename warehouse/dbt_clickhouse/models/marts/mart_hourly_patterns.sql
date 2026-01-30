@@ -6,8 +6,6 @@
     )
 }}
 
--- Fraud patterns by hour and day of week
--- Use case: Dashboard, Alert threshold calibration
 with hourly_stats as (
     select
         hour_of_day,

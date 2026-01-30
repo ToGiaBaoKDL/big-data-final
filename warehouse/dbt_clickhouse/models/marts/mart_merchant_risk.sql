@@ -15,6 +15,9 @@ merchant_stats as (
         merchant_id,
         count(*) as total_incoming_txns,
         sum(amount) as total_received_volume,
+        avg(amount) as avg_received_amount,
+        max(amount) as max_received_amount,
+        stddevPop(amount) as stddev_received_amount,
         sum(is_fraud) as fraud_received_count,
         count(distinct user_id) as unique_senders,
         sum(is_fraud) / count(*) as fraud_risk_ratio

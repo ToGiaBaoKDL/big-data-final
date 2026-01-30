@@ -3,8 +3,7 @@ import pendulum
 import argparse
 import os
 
-# CONSTANTS (Should match generate_paysim.py logic)
-SIMULATION_START = "2025-12-29T00:00:00+00:00"
+SIMULATION_START = "2025-12-28T00:00:00+00:00"
 
 def calculate_step(logical_date_str):
     logical_date = pendulum.parse(logical_date_str)

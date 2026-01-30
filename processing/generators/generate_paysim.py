@@ -9,6 +9,7 @@ import numpy as np
 from faker import Faker
 from minio import Minio
 import argparse
+import concurrent.futures
 
 # --- Configuration ---
 MINIO_ENDPOINT = os.getenv("AWS_ENDPOINT_URL", "http://localhost:9000").replace("http://", "")
@@ -17,7 +18,7 @@ MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minio_password")
 BUCKET_LANDING = os.getenv("MINIO_BUCKET_LANDING", "dl-landing-8f42a1")
 
 # Constants
-START_DATE_SIMULATION = datetime(2025, 12, 29, 0, 0, 0)
+START_DATE_SIMULATION = datetime(2025, 12, 28, 0, 0, 0)
 FAKE = Faker()
 
 # PaySim Config
@@ -83,14 +84,25 @@ def step_to_base_timestamp(step: int) -> datetime:
 def generate_diverse_timestamps(step: int, n_rows: int) -> tuple:
     """
     Tạo timestamps phân bố trong 1 giờ với clustering effect.
+    
+    Timestamps sẽ:
+    - 70% random lẻ trong giờ (giây ngẫu nhiên từ 0-3599)
+    - 30% cluster vào phút tròn (:00, :15, :30, :45) để giống thực tế
+    
+    Ví dụ step=1 (giờ 00:00-00:59):
+    - Transaction 1: 00:03:27 (random)
+    - Transaction 2: 00:15:42 (cluster vào :15)
+    - Transaction 3: 00:47:13 (random)
+    - Transaction 4: 00:30:08 (cluster vào :30)
+    
     Returns: (timestamps_array, part_dts_array, part_hours_array)
     """
     base_time = step_to_base_timestamp(step)
     
-    # Generate random seconds (0-3599)
+    # Generate random seconds (0-3599) - giây ngẫu nhiên trong 1 giờ
     random_offsets = np.random.uniform(0, 3600, size=n_rows)
     
-    # Clustering: 30% vào phút tròn (:00, :15, :30, :45)
+    # Clustering: 30% vào phút tròn (:00, :15, :30, :45) - simulate real user behavior
     cluster_mask = np.random.random(n_rows) < 0.30
     cluster_minutes = np.random.choice([0, 15, 30, 45], size=cluster_mask.sum())
     random_offsets[cluster_mask] = cluster_minutes * 60 + np.random.uniform(0, 60, size=cluster_mask.sum())
@@ -175,20 +187,46 @@ def get_amount_by_segment_and_type(txn_type: str, segment: str, n: int) -> np.nd
     
     return amounts
 
-def upload_local_directory_to_minio(client, local_path, bucket, prefix):
-    """Recursively uploads a local directory to MinIO."""
+def upload_file(client, bucket, object_name, file_path):
+    """Helper function for single file upload."""
+    try:
+        client.fput_object(bucket, object_name, file_path)
+        print(f"Uploaded {object_name}")
+    except Exception as e:
+        print(f"Failed to upload {object_name}: {e}")
+
+def upload_local_directory_to_minio(client, local_path, bucket, prefix, max_workers=8):
+    """Recursively uploads a local directory to MinIO in parallel."""
+    files_to_upload = []
+    
     for root, _, files in os.walk(local_path):
         for file in files:
             file_path = os.path.join(root, file)
             rel_path = os.path.relpath(file_path, local_path)
             object_name = f"{prefix}/{rel_path}"
-            
-            print(f"Uploading {object_name}...")
-            client.fput_object(bucket, object_name, file_path)
+            files_to_upload.append((bucket, object_name, file_path))
+    
+    print(f"Uploading {len(files_to_upload)} files with {max_workers} threads...")
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all upload tasks
+        futures = [
+            executor.submit(upload_file, client, bucket, obj, path)
+            for bucket, obj, path in files_to_upload
+        ]
+        
+        # Wait for completion
+        for future in concurrent.futures.as_completed(futures):
+            # We can aggregate results here if needed
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Upload task failed: {e}")
 
 def process_initial_load(source_file):
     """
-    Mode Init: Đọc CSV, thêm varied timestamps, partition và upload.
+    Mode Init: Đọc CSV, thêm varied timestamps, partition và upload trực tiếp lên MinIO.
+    Ensures consistent schema with incremental mode.
     """
     print(f"Processing Initial Data from {source_file}...")
     
@@ -196,53 +234,88 @@ def process_initial_load(source_file):
     
     if 'step' not in df.columns:
         raise ValueError("CSV must contain 'step' column")
+
+    df = df.with_columns([
+        pl.col("isFraud").cast(pl.Int8),
+        pl.col("isFlaggedFraud").cast(pl.Int8),
+        pl.col("amount").cast(pl.Float64),
+        pl.col("oldbalanceOrg").cast(pl.Float64),
+        pl.col("newbalanceOrig").cast(pl.Float64),
+        pl.col("oldbalanceDest").cast(pl.Float64),
+        pl.col("newbalanceDest").cast(pl.Float64),
+    ])
     
-    print(f"Total rows: {len(df)}")
-    print("Adding varied transaction timestamps...")
+    print(f"Total rows: {len(df):,}")
+    print(f"Unique steps: {df['step'].n_unique()}")
+    print("\nAdding varied transaction timestamps and uploading...")
     
-    # Group by step để xử lý
-    steps = df["step"].unique().sort()
-    dfs_with_timestamps = []
+    # Get MinIO client
+    client = get_minio_client()
+    if not client.bucket_exists(BUCKET_LANDING):
+        print(f"Creating bucket: {BUCKET_LANDING}")
+        client.make_bucket(BUCKET_LANDING)
     
-    for step_val in steps:
+    steps = sorted(df["step"].unique().to_list())
+    total_uploaded = 0
+    
+    for i, step_val in enumerate(steps, 1):
         step_df = df.filter(pl.col("step") == step_val)
         n_step_rows = len(step_df)
+        
+        print(f"\n[{i}/{len(steps)}] Processing step {step_val}: {n_step_rows:,} rows")
         
         # Generate varied timestamps
         times, part_dts, part_hours = generate_diverse_timestamps(step_val, n_step_rows)
         
+        # Convert Python datetimes to ISO strings for Polars compatibility
+        times_str = [t.strftime("%Y-%m-%d %H:%M:%S") for t in times]
+        
         step_df = step_df.with_columns([
-            pl.Series("transaction_time", times),
+            pl.Series("transaction_time", times_str).str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S"),
             pl.Series("part_dt", part_dts),
             pl.Series("part_hour", part_hours)
         ])
         
-        dfs_with_timestamps.append(step_df)
-    
-    df_processed = pl.concat(dfs_with_timestamps)
-    
-    # Write partitioned parquet
-    temp_dir = "temp_paysim_init"
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
+        # Get unique partitions and upload each
+        unique_partitions = step_df.select(["part_dt", "part_hour"]).unique()
         
-    print("Writing partitioned parquet locally...")
-    df_processed.write_parquet(
-        temp_dir,
-        use_pyarrow=True,
-        partition_by=["part_dt", "part_hour"]
-    )
+        partition_count = 0
+        for row in unique_partitions.iter_rows(named=True):
+            part_dt = row["part_dt"]
+            part_hour = row["part_hour"]
+            
+            partition_df = step_df.filter(
+                (pl.col("part_dt") == part_dt) & (pl.col("part_hour") == part_hour)
+            )
+            
+            # Convert to parquet in memory
+            buffer = io.BytesIO()
+            partition_df.write_parquet(buffer)
+            buffer.seek(0)
+            file_size = buffer.getbuffer().nbytes
+            
+            # Upload to MinIO
+            filename = f"init_step{step_val}_{part_dt}_{part_hour}.parquet"
+            object_name = f".warehouse/paysim_txn/part_dt={part_dt}/part_hour={part_hour}/{filename}"
+            
+            client.put_object(
+                BUCKET_LANDING,
+                object_name,
+                buffer,
+                file_size,
+                content_type="application/octet-stream"
+            )
+            
+            partition_count += 1
+            total_uploaded += len(partition_df)
+        
+        print(f"  Step {step_val}: {partition_count} partitions, {n_step_rows:,} rows uploaded")
     
-    # Upload
-    client = get_minio_client()
-    if not client.bucket_exists(BUCKET_LANDING):
-        client.make_bucket(BUCKET_LANDING)
+    print(f"Initial Load Complete!")
+    print(f"  Total rows: {total_uploaded:,}")
+    print(f"  Steps: {len(steps)}")
+    print(f"  Bucket: {BUCKET_LANDING}")
 
-    print("Uploading to MinIO...")
-    upload_local_directory_to_minio(client, temp_dir, BUCKET_LANDING, ".warehouse/paysim_txn")
-    
-    shutil.rmtree(temp_dir)
-    print("Initial Load Complete.")
 
 def get_fraud_rate_for_hour(hour: int) -> float:
     """Fraud cao hơn vào ban đêm (22h-6h)."""
@@ -464,17 +537,17 @@ def generate_step_data(step: int, base_rows: int):
     
     # 10. Create DataFrame - ALL arrays are already sorted by time
     df = pl.DataFrame({
-        "step": np.full(n_rows, step),
+        "step": np.full(n_rows, step, dtype=np.int32),
         "type": types_array.tolist(),
-        "amount": amounts,
+        "amount": amounts.astype(np.float64),  # Float64 for Spark/ClickHouse
         "nameOrig": name_orig.tolist(),
-        "oldbalanceOrg": old_balance_orig,
-        "newbalanceOrig": new_balance_orig,
+        "oldbalanceOrg": old_balance_orig.astype(np.float64),
+        "newbalanceOrig": new_balance_orig.astype(np.float64),
         "nameDest": name_dest.tolist(),
-        "oldbalanceDest": old_balance_dest,
-        "newbalanceDest": new_balance_dest,
-        "isFraud": is_fraud,
-        "isFlaggedFraud": is_flagged_fraud,
+        "oldbalanceDest": old_balance_dest.astype(np.float64),
+        "newbalanceDest": new_balance_dest.astype(np.float64),
+        "isFraud": is_fraud.astype(np.int8),  # Int8 for UInt8 in ClickHouse
+        "isFlaggedFraud": is_flagged_fraud.astype(np.int8),
         "transaction_time": trans_times.tolist(),
         "part_dt": part_dts.tolist(),
         "part_hour": part_hours.tolist()

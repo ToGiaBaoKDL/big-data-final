@@ -13,6 +13,15 @@ x-spark-common: &spark-common
   environment:
     - SPARK_HOME=/opt/spark
 
+x-spark-s3a-env: &spark-s3a-env
+  SPARK_HADOOP_fs_s3a_impl: org.apache.hadoop.fs.s3a.S3AFileSystem
+  SPARK_HADOOP_fs_s3a_endpoint: http://minio:9000
+  SPARK_HADOOP_fs_s3a_access_key: ${MINIO_ROOT_USER}
+  SPARK_HADOOP_fs_s3a_secret_key: ${MINIO_ROOT_PASSWORD}
+  SPARK_HADOOP_fs_s3a_path_style_access: "true"
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+
 services:
   spark-master:
     <<: *spark-common
@@ -25,10 +34,9 @@ services:
       - "9090:8080"
       - "7077:7077"
     environment:
-      - SPARK_MODE=master
-      - SPARK_EVENTLOG_ENABLED=true
-      - SPARK_EVENTLOG_DIR=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
-      - SPARK_HISTORY_FS_LOGDIRECTORY=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
+      SPARK_MODE: master
+      SPARK_EVENTLOG_ENABLED: "true"
+      SPARK_EVENTLOG_DIR: s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
 
   spark-worker:
     <<: *spark-common
@@ -42,15 +50,12 @@ services:
           cpus: '${SPARK_WORKER_CPU_LIMIT:-1.0}'
           memory: ${SPARK_WORKER_MEM_LIMIT:-2G}
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-2G}
-      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
-      - SPARK_EVENTLOG_ENABLED=true
-      - SPARK_EVENTLOG_DIR=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
-      - SPARK_HISTORY_FS_LOGDIRECTORY=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
-      - SPARK_HADOOP_fs_s3a_impl=org.apache.hadoop.fs.s3a.S3AFileSystem
-      - SPARK_HADOOP_fs_s3a_path_style_access=true
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2G}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+      SPARK_EVENTLOG_ENABLED: "true"
+      SPARK_EVENTLOG_DIR: s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
 
   spark-history-server:
     <<: *spark-common
@@ -60,17 +65,15 @@ services:
       - minio
     ports:
       - "18080:18080"
-    env_file:
-      - ../.env
     environment:
-      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
-      - SPARK_HADOOP_fs_s3a_endpoint=http://minio:9000
-      - SPARK_HADOOP_fs_s3a_access_key=${MINIO_ROOT_USER}
-      - SPARK_HADOOP_fs_s3a_secret_key=${MINIO_ROOT_PASSWORD}
-      - SPARK_HADOOP_fs_s3a_path_style_access=true
-      - SPARK_HADOOP_fs_s3a_impl=org.apache.hadoop.fs.s3a.S3AFileSystem
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      <<: *spark-s3a-env
+      SPARK_HISTORY_OPTS: >-
+        -Dspark.history.fs.logDirectory=s3a://${MINIO_BUCKET_LOGS:-dl-logs-3e91b5}/spark-events/
+        -Dspark.hadoop.fs.s3a.endpoint=http://minio:9000
+        -Dspark.hadoop.fs.s3a.access.key=${MINIO_ROOT_USER}
+        -Dspark.hadoop.fs.s3a.secret.key=${MINIO_ROOT_PASSWORD}
+        -Dspark.hadoop.fs.s3a.path.style.access=true
+        -Dspark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:18080"]
       interval: 30s

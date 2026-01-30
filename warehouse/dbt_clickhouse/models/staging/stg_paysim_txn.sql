@@ -30,6 +30,8 @@ renamed as (
         is_org_zero_init,
         is_errorBalanceOrig as is_error_balance_orig,
         is_errorBalanceDest as is_error_balance_dest,
+        -- Metadata
+        processed_at,
         -- Partition columns
         part_dt,
         part_hour,

@@ -6,6 +6,12 @@ models:
     columns:
       - name: merchant_id
         description: "Merchant Identifier (Dest)."
+      - name: avg_received_amount
+        description: "Average transaction value received."
+      - name: max_received_amount
+        description: "Maximum single transaction value received."
+      - name: stddev_received_amount
+        description: "Volatility of received transaction amounts."
       - name: fraud_risk_ratio
         description: "Percentage of transactions received that were fraudulent (0.0 to 1.0)."
 

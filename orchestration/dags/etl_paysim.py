@@ -7,15 +7,15 @@ from datetime import datetime, timedelta
 import pendulum
 import os
 
-SIMULATION_START = "2025-12-29T00:00:00+00:00"
-DAG_START_DATE = pendulum.datetime(2025, 12, 29, tz="UTC")
+DAG_START_DATE = pendulum.datetime(2025, 12, 28, tz="UTC")
+EXECUTION_DATE_TEMPLATE = """{{ (dag_run.conf.get('execution_date') if dag_run and dag_run.conf and dag_run.conf.get('execution_date') else data_interval_start) | string | trim }}"""
 
 GENERATOR_PATH = os.getenv("PAYSIM_GENERATOR_PATH", "/opt/airflow/processing/generators/generate_paysim.py")
 SPARK_PROCESSOR_PATH = os.getenv("PAYSIM_PROCESSOR_PATH", "/opt/airflow/processing/spark/process_paysim.py")
 UTIL_SCRIPT_PATH = "/opt/airflow/plugins/utils/paysim_time_calc.py"
 
-BASE_ROWS = int(os.getenv("PAYSIM_BASE_ROWS", "1000"))
-SPARK_MASTER = os.getenv("SPARK_MASTER", "local[*]")
+BASE_ROWS = int(os.getenv("PAYSIM_BASE_ROWS", "2000"))
+SPARK_MASTER = os.getenv("SPARK_MASTER", "spark://spark-master:7077")
 
 default_args = {
     'owner': 'data-engineer',
@@ -36,6 +36,18 @@ with DAG(
     catchup=False,
     max_active_runs=1,
     tags=['paysim', 'spark', 'etl', 'hourly'],
+    params={
+        'execution_date': None,  # Override date: YYYY-MM-DDTHH:MM:SS+00:00 (default: data_interval_start)
+    },
+    doc_md="""
+    ## PaySim ETL Pipeline
+    
+    **Modes:**
+    - Scheduled: Runs hourly, uses `data_interval_start`
+    - Manual: Trigger with `{"execution_date": "2026-01-30T10:00:00+00:00"}`
+    
+    **Flow:** generate → process → validate → ingest → dbt → (trigger ML at 23:00)
+    """,
 ) as dag:
 
     generate_data = BashOperator(
@@ -43,13 +55,14 @@ with DAG(
         bash_command=f"""
         set -e
 
-        STEP=$(python3 {UTIL_SCRIPT_PATH} "{{{{ data_interval_start }}}}" step)
+        EXEC_DATE="{EXECUTION_DATE_TEMPLATE}"
+        STEP=$(python3 {UTIL_SCRIPT_PATH} "$EXEC_DATE" step)
         
         echo "--------------------------------------------"
         echo "Generating PaySim data"
         echo "Step: $STEP"
         echo "Execution Date: {{{{ ds }}}}"
-        echo "Logical Date: {{{{ data_interval_start }}}}"
+        echo "Logical Date: $EXEC_DATE"
         echo "--------------------------------------------"
         
         python {GENERATOR_PATH} generate --rows {BASE_ROWS} --step $STEP
@@ -68,8 +81,8 @@ with DAG(
         bash_command=f"""
         set -e
         
-        # Get all values in one call
-        read STEP PART_DT PART_HOUR <<< $(python3 {UTIL_SCRIPT_PATH} "{{{{ data_interval_start }}}}" all)
+        EXEC_DATE="{EXECUTION_DATE_TEMPLATE}"
+        read STEP PART_DT PART_HOUR <<< $(python3 {UTIL_SCRIPT_PATH} "$EXEC_DATE" all)
         
         echo "--------------------------------------------"
         echo "Processing PaySim data"
@@ -84,7 +97,17 @@ with DAG(
             --executor-memory 2g \
             --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
             --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+            --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
+            --conf spark.hadoop.fs.s3a.access.key=${{MINIO_ROOT_USER}} \
+            --conf spark.hadoop.fs.s3a.secret.key=${{MINIO_ROOT_PASSWORD}} \
+            --conf spark.hadoop.fs.s3a.path.style.access=true \
+            --conf spark.sql.shuffle.partitions=50 \
+            --conf spark.eventLog.enabled=true \
+            --conf spark.eventLog.dir=s3a://${{MINIO_BUCKET_LOGS:-dl-logs-3e91b5}}/spark-events/ \
+            --conf spark.hadoop.fs.s3a.committer.name=directory \
+            --conf spark.hadoop.fs.s3a.committer.staging.tmp.path=/tmp/spark-staging \
             {SPARK_PROCESSOR_PATH} \
+            --mode incremental \
             --part_dt $PART_DT \
             --part_hour $PART_HOUR
         
@@ -102,7 +125,8 @@ with DAG(
         bash_command=f"""
         set -e
         
-        read STEP PART_DT PART_HOUR <<< $(python3 {UTIL_SCRIPT_PATH} "{{{{ data_interval_start }}}}" all)
+        EXEC_DATE="{EXECUTION_DATE_TEMPLATE}"
+        read STEP PART_DT PART_HOUR <<< $(python3 {UTIL_SCRIPT_PATH} "$EXEC_DATE" all)
         
         echo "--------------------------------------------"
         echo "Validating output"
@@ -121,14 +145,16 @@ with DAG(
         bash_command=f"""
         set -e
         
-        read STEP PART_DT PART_HOUR <<< $(python3 {UTIL_SCRIPT_PATH} "{{{{ data_interval_start }}}}" all)
+        EXEC_DATE="{EXECUTION_DATE_TEMPLATE}"
+        read STEP PART_DT PART_HOUR <<< $(python3 {UTIL_SCRIPT_PATH} "$EXEC_DATE" all)
         
         echo "--------------------------------------------"
         echo "Ingesting to ClickHouse"
         echo "Partition: part_dt=$PART_DT, part_hour=$PART_HOUR"
         echo "--------------------------------------------"
         
-        python3 /opt/airflow/warehouse/ingestion/clickhouse_loader.py \
+        python3 /opt/airflow/warehouse/clickhouse/clickhouse_loader.py \
+            --mode incremental \
             --part_dt $PART_DT \
             --part_hour $PART_HOUR
         """,
@@ -163,7 +189,8 @@ with DAG(
 
     @task.branch(task_id='check_end_of_day')
     def check_end_of_day(**context):
-        if context['execution_date'].hour == 23:
+        logical_date = context.get('data_interval_start') or context.get('execution_date')
+        if logical_date.hour == 23:
             return 'trigger_ml_pipeline'
         return 'end_pipeline'
 

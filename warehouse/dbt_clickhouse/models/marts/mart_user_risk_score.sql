@@ -6,8 +6,6 @@
     )
 }}
 
--- User Risk Score based on multiple fraud indicators
--- Use case: ML feature store, KYC, Risk management
 with user_base as (
     select * from {{ ref('dim_users') }}
 ),
@@ -78,8 +76,22 @@ select
     -- Risk Category
     case
         when u.fraud_count > 0 then 'BLOCKED'
-        when least(u.fraud_count * 40 + coalesce(b.emptied_account_count, 0) * 5, 100) > 50 then 'HIGH_RISK'
-        when least(u.fraud_count * 40 + coalesce(b.emptied_account_count, 0) * 5, 100) > 20 then 'MEDIUM_RISK'
+        when least(
+            u.fraud_count * 40 + 
+            least(coalesce(b.emptied_account_count, 0) * 5, 20) + 
+            least(coalesce(b.night_txns, 0) * 100.0 / greatest(u.total_txns, 1), 15) + 
+            least(coalesce(b.balance_error_count, 0) * 3, 15) + 
+            least(coalesce(b.to_new_account_count, 0) * 2, 10),
+            100
+        ) > 50 then 'HIGH_RISK'
+        when least(
+            u.fraud_count * 40 + 
+            least(coalesce(b.emptied_account_count, 0) * 5, 20) + 
+            least(coalesce(b.night_txns, 0) * 100.0 / greatest(u.total_txns, 1), 15) + 
+            least(coalesce(b.balance_error_count, 0) * 3, 15) + 
+            least(coalesce(b.to_new_account_count, 0) * 2, 10),
+            100
+        ) > 20 then 'MEDIUM_RISK'
         else 'LOW_RISK'
     end as risk_category,
     

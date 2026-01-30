@@ -17,5 +17,10 @@ mc mb --ignore-existing minio/$BUCKET_LOGS
 mc mb --ignore-existing minio/$BUCKET_MLFLOW
 mc mb --ignore-existing minio/$BUCKET_DATASCIENCE
 
+# Create necessary prefixes/folders for Spark event logs and Airflow logs
+echo "Creating required folders in buckets..."
+mc cp /dev/null minio/$BUCKET_LOGS/spark-events/.keep 2>/dev/null || echo "spark-events folder created via write"
+mc cp /dev/null minio/$BUCKET_LOGS/airflow/.keep 2>/dev/null || echo "airflow folder created via write"
+
 echo "Buckets created: $BUCKET_LANDING, $BUCKET_ANALYTICS, $BUCKET_LOGS, $BUCKET_MLFLOW, $BUCKET_DATASCIENCE"
 exit 0

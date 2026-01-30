@@ -38,6 +38,16 @@ sources:
             description: "Calculated error in origin balance (Old - Amount - New)."
           - name: errorBalanceDest
             description: "Calculated error in dest balance (Old + Amount - New)."
+          - name: is_errorBalanceOrig
+            description: "Flag: 1 if balance error exists on origin."
+          - name: is_errorBalanceDest
+            description: "Flag: 1 if balance error exists on dest."
+          - name: is_transfer
+            description: "Flag: 1 if transaction type is TRANSFER."
+          - name: is_cash_out
+            description: "Flag: 1 if transaction type is CASH_OUT."
+          - name: is_merchant_dest
+            description: "Flag: 1 if destination is a Merchant (M prefix)."
           - name: hour_of_day
             description: "Hour of day (0-23)."
           - name: day_of_week
@@ -48,3 +58,9 @@ sources:
             description: "Flag: Zero Init Dest."
           - name: is_org_zero_init
             description: "Flag: Zero Init Orig."
+          - name: processed_at
+            description: "Timestamp when data was processed by Spark."
+          - name: part_dt
+            description: "Partition date YYYYMMDD."
+          - name: part_hour
+            description: "Partition hour HH."

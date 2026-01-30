@@ -6,8 +6,6 @@ x-airflow-common: &airflow-common
       AIRFLOW_IMAGE_TAG: ${AIRFLOW_IMAGE_TAG:-2.11.0}
       SPARK_TAG: ${SPARK_TAG:-3.5.8}
   user: "${AIRFLOW_UID:-50000}:0"
-  env_file:
-    - ../.env
   environment: &airflow-common-env
     # Core
     AIRFLOW__CORE__EXECUTOR: LocalExecutor

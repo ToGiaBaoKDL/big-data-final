@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS finance_dw.paysim_txn (
     is_errorBalanceOrig UInt8,
     is_errorBalanceDest UInt8,
     
+    -- Metadata
+    processed_at DateTime DEFAULT now(),
+    
     -- Partition Columns
     part_dt String,
     part_hour String

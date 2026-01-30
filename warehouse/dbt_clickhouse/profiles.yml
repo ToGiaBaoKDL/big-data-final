@@ -11,3 +11,4 @@ lakehouse:
       secure: false
       verify: false
       connect_timeout: 30 
+      threads: 4

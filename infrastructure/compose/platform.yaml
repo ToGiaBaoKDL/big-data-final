@@ -55,8 +55,6 @@ services:
       - minio
     volumes:
         - ../scripts/init-minio.sh:/scripts/init-minio.sh
-    env_file:
-      - ../.env
     entrypoint: /scripts/init-minio.sh
 
   clickhouse:

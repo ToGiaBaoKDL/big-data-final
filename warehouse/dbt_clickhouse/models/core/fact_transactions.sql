@@ -33,11 +33,18 @@ select
     is_org_zero_init,
     is_error_balance_orig,
     is_error_balance_dest,
+    processed_at,
     part_dt,
     part_hour
 from {{ ref('stg_paysim_txn') }}
 
 {% if is_incremental() %}
--- Only load new partitions
-where part_dt >= (select max(part_dt) from {{ this }})
+-- Only load new partitions (use max of concatenated values for proper comparison)
+where concat(part_dt, part_hour) > (
+    select coalesce(
+        max(concat(part_dt, part_hour)),
+        '1970010100'
+    )
+    from {{ this }}
+)
 {% endif %}

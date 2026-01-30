@@ -44,6 +44,10 @@ models:
         description: "Fraud flag."
       - name: is_flagged_fraud
         description: "System flagged fraud."
+      - name: is_transfer
+        description: "Flag: 1 if TRANSFER type."
+      - name: is_cash_out
+        description: "Flag: 1 if CASH_OUT type."
       - name: is_merchant_dest
         description: "Flag: 1 if destination is Merchant."
       - name: hour_of_day
@@ -56,3 +60,13 @@ models:
         description: "Flag: Zero Init Dest."
       - name: is_org_zero_init
         description: "Flag: Zero Init Orig."
+      - name: is_error_balance_orig
+        description: "Flag: Balance error on origin."
+      - name: is_error_balance_dest
+        description: "Flag: Balance error on dest."
+      - name: processed_at
+        description: "Timestamp when processed by Spark."
+      - name: part_dt
+        description: "Partition date YYYYMMDD."
+      - name: part_hour
+        description: "Partition hour HH."
