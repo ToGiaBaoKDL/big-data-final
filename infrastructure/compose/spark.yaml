@@ -40,7 +40,11 @@ services:
 
   spark-worker:
     <<: *spark-common
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker 
+      --memory ${SPARK_WORKER_MEMORY:-2G}
+      --cores ${SPARK_WORKER_CORES:-2}
+      spark://spark-master:7077
     depends_on:
       - spark-master
     deploy:
@@ -48,7 +52,7 @@ services:
       resources:
         limits:
           cpus: '${SPARK_WORKER_CPU_LIMIT:-1.0}'
-          memory: ${SPARK_WORKER_MEM_LIMIT:-2G}
+          memory: ${SPARK_WORKER_MEM_LIMIT:-3G}
     environment:
       SPARK_MODE: worker
       SPARK_MASTER_URL: spark://spark-master:7077

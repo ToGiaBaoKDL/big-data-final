@@ -183,21 +183,33 @@ with DAG(
         spark-submit \\
             --master {SPARK_MASTER} \\
             --driver-memory 800m \\
-            --executor-memory 1200m \\
+            --executor-memory 1g \\
+            --conf spark.driver.maxResultSize=400m \\
             --conf spark.executor.memoryOverhead=300m \\
+            --conf spark.driver.memoryOverhead=256m \\
+            --conf spark.memory.fraction=0.7 \\
+            --conf spark.memory.storageFraction=0.3 \\
             --conf spark.sql.shuffle.partitions=20 \\
+            --conf spark.default.parallelism=20 \\
             --conf spark.sql.adaptive.enabled=true \\
             --conf spark.sql.adaptive.coalescePartitions.enabled=true \\
             --conf spark.pyspark.python=python3 \\
             --conf spark.pyspark.driver.python=python3 \\
             --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \\
-            --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
-            --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
-            --conf spark.hadoop.fs.s3a.access.key=${{MINIO_ROOT_USER}} \
-            --conf spark.hadoop.fs.s3a.secret.key=${{MINIO_ROOT_PASSWORD}} \
-            --conf spark.hadoop.fs.s3a.path.style.access=true \
-            --conf spark.eventLog.enabled=true \
-            --conf spark.eventLog.dir=s3a://${{MINIO_BUCKET_LOGS:-dl-logs-3e91b5}}/spark-events/ \
+            --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \\
+            --conf spark.hadoop.fs.s3.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \\
+            --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \\
+            --conf spark.hadoop.fs.s3.endpoint=http://minio:9000 \\
+            --conf spark.hadoop.fs.s3a.access.key=${{MINIO_ROOT_USER}} \\
+            --conf spark.hadoop.fs.s3a.secret.key=${{MINIO_ROOT_PASSWORD}} \\
+            --conf spark.hadoop.fs.s3.access.key=${{MINIO_ROOT_USER}} \\
+            --conf spark.hadoop.fs.s3.secret.key=${{MINIO_ROOT_PASSWORD}} \\
+            --conf spark.hadoop.fs.s3a.path.style.access=true \\
+            --conf spark.hadoop.fs.s3.path.style.access=true \\
+            --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \\
+            --conf spark.hadoop.fs.s3.connection.ssl.enabled=false \\
+            --conf spark.eventLog.enabled=false \\
+            --conf spark.ui.showConsoleProgress=true \\
             {ML_SCRIPT_PATH}/train_spark.py $ARGS
         
         TRAIN_EXIT_CODE=$?

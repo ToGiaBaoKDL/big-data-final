@@ -68,30 +68,31 @@ with DAG(
         spark-submit \\
             --master {SPARK_MASTER} \\
             --driver-memory 800m \\
-            --executor-memory 1200m \\
-            --conf spark.driver.maxResultSize=512m \\
+            --executor-memory 1g \\
+            --conf spark.driver.maxResultSize=400m \\
             --conf spark.executor.memoryOverhead=300m \\
+            --conf spark.driver.memoryOverhead=256m \\
             --conf spark.sql.shuffle.partitions=20 \\
             --conf spark.default.parallelism=20 \\
-            --conf spark.memory.fraction=0.8 \\
+            --conf spark.memory.fraction=0.7 \\
             --conf spark.memory.storageFraction=0.3 \\
             --conf spark.sql.adaptive.enabled=true \\
             --conf spark.sql.adaptive.coalescePartitions.enabled=true \\
             --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \\
-            --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
-            --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
-            --conf spark.hadoop.fs.s3a.access.key=${{MINIO_ROOT_USER}} \
-            --conf spark.hadoop.fs.s3a.secret.key=${{MINIO_ROOT_PASSWORD}} \
-            --conf spark.hadoop.fs.s3a.path.style.access=true \
-            --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
-            --conf spark.hadoop.fs.s3a.multiobjectdelete.enable=true \
-            --conf spark.hadoop.fs.s3a.buffer.dir=/tmp/spark-s3a \
-            --conf spark.hadoop.fs.s3a.fast.upload=true \
-            --conf spark.hadoop.fs.s3a.fast.upload.buffer=bytebuffer \
-            --conf spark.eventLog.enabled=false \
-            --conf spark.ui.showConsoleProgress=true \
-            {FEATURE_SCRIPT_PATH} \
-            --mode incremental \
+            --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \\
+            --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \\
+            --conf spark.hadoop.fs.s3a.access.key=${{MINIO_ROOT_USER}} \\
+            --conf spark.hadoop.fs.s3a.secret.key=${{MINIO_ROOT_PASSWORD}} \\
+            --conf spark.hadoop.fs.s3a.path.style.access=true \\
+            --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \\
+            --conf spark.hadoop.fs.s3a.multiobjectdelete.enable=true \\
+            --conf spark.hadoop.fs.s3a.buffer.dir=/tmp/spark-s3a \\
+            --conf spark.hadoop.fs.s3a.fast.upload=true \\
+            --conf spark.hadoop.fs.s3a.fast.upload.buffer=bytebuffer \\
+            --conf spark.eventLog.enabled=false \\
+            --conf spark.ui.showConsoleProgress=true \\
+            {FEATURE_SCRIPT_PATH} \\
+            --mode incremental \\
             --execution_date $EXEC_DATE
         
         if [ $? -eq 0 ]; then

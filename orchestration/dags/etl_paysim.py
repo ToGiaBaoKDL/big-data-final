@@ -94,9 +94,14 @@ with DAG(
         spark-submit \
             --master {SPARK_MASTER} \
             --driver-memory 800m \
-            --executor-memory 1200m \
+            --executor-memory 1g \
+            --conf spark.driver.maxResultSize=400m \
             --conf spark.executor.memoryOverhead=300m \
+            --conf spark.driver.memoryOverhead=256m \
+            --conf spark.memory.fraction=0.7 \
+            --conf spark.memory.storageFraction=0.3 \
             --conf spark.sql.shuffle.partitions=20 \
+            --conf spark.default.parallelism=20 \
             --conf spark.sql.adaptive.enabled=true \
             --conf spark.sql.adaptive.coalescePartitions.enabled=true \
             --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
