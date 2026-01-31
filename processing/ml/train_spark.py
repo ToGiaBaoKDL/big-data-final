@@ -35,8 +35,6 @@ def create_spark_session():
         .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY) \
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .config("spark.driver.memory", "4g") \
-        .config("spark.executor.memory", "4g") \
         .getOrCreate()
     return spark
 
@@ -87,11 +85,12 @@ def prepare_data(df):
 
 def split_data_by_time(df, train_ratio):
     """Time-based split to avoid data leakage."""
-    # Use transaction_time for splitting
-    threshold = df.stat.approxQuantile("transaction_time", [train_ratio], 0.01)[0]
+    # Convert timestamp to numeric for approxQuantile (Spark doesn't support quantile on TimestampType)
+    df_with_ts = df.withColumn("_ts_numeric", col("transaction_time").cast("long"))
+    threshold = df_with_ts.stat.approxQuantile("_ts_numeric", [train_ratio], 0.01)[0]
     
-    train_df = df.filter(col("transaction_time") <= threshold)
-    test_df = df.filter(col("transaction_time") > threshold)
+    train_df = df.filter(col("transaction_time").cast("long") <= threshold)
+    test_df = df.filter(col("transaction_time").cast("long") > threshold)
     
     print(f"Train: {train_df.count():,} rows")
     print(f"Test: {test_df.count():,} rows")
@@ -165,7 +164,7 @@ def tune_model(pipeline, model, train_df, model_type="lr"):
             .addGrid(model.elasticNetParam, SPARK_LR_PARAMS["elasticNetParam"]) \
             .build()
     else:
-        param_grid = ParamGridBuilder().build()  # Use defaults for tree models
+        param_grid = ParamGridBuilder().build()
     
     cv = CrossValidator(
         estimator=pipeline,
@@ -224,9 +223,7 @@ def evaluate_model(model, test_df):
         "macro_recall": (recall_fraud + recall_normal) / 2
     }
     
-    print("\n" + "="*60)
     print("MODEL EVALUATION RESULTS")
-    print("="*60)
     for k, v in results.items():
         print(f"  {k}: {v:.4f}")
     
@@ -248,11 +245,11 @@ def train_with_mlflow(spark, args):
         mlflow.log_param("num_features", len(FEATURE_COLS))
         
         # 1. Load data
-        print("\n📂 Loading Features...")
+        print("\nLoading Features...")
         df = load_features(spark, args.run_date)
         
         # 2. Prepare data
-        print("\n🔧 Preparing Data...")
+        print("\nPreparing Data...")
         df, weight_ratio = prepare_data(df)
         mlflow.log_param("class_weight_ratio", weight_ratio)
         
@@ -262,25 +259,25 @@ def train_with_mlflow(spark, args):
         mlflow.log_param("features_used", len(available_features))
         
         # 3. Split data
-        print("\n📊 Splitting Data...")
+        print("\nSplitting Data...")
         train_df, test_df = split_data_by_time(df, TRAIN_RATIO)
         mlflow.log_param("train_size", train_df.count())
         mlflow.log_param("test_size", test_df.count())
         
         # 4. Build pipeline
-        print(f"\n🔨 Building Pipeline ({args.model})...")
+        print(f"\nBuilding Pipeline ({args.model})...")
         pipeline, model_obj = build_pipeline(available_features, args.model)
         
         # 5. Train/Tune
         if args.tune:
-            print("\n🎯 Tuning Hyperparameters...")
+            print("\nTuning Hyperparameters...")
             best_model = tune_model(pipeline, model_obj, train_df, args.model)
         else:
-            print("\n🚀 Training Model...")
+            print("\nTraining Model...")
             best_model = pipeline.fit(train_df)
         
         # 6. Evaluate
-        print("\n📈 Evaluating Model...")
+        print("\nEvaluating Model...")
         metrics, predictions = evaluate_model(best_model, test_df)
         
         # Log metrics to MLflow
@@ -289,7 +286,7 @@ def train_with_mlflow(spark, args):
         
         # 7. Save model
         if args.save_model:
-            print("\n💾 Saving Model to MLflow...")
+            print("\nSaving Model to MLflow...")
             mlflow.spark.log_model(
                 best_model,
                 artifact_path="spark_model",
@@ -302,7 +299,7 @@ def train_with_mlflow(spark, args):
             f.write("\n".join(available_features))
         mlflow.log_artifact("/tmp/features.txt")
         
-        print("\n✅ Training Complete!")
+        print("\nTraining Complete!")
         print(f"MLflow Run ID: {mlflow.active_run().info.run_id}")
         
         return best_model, metrics

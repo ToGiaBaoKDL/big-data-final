@@ -3,7 +3,7 @@ x-airflow-common: &airflow-common
     context: ../../
     dockerfile: infrastructure/docker/airflow/Dockerfile
     args:
-      AIRFLOW_IMAGE_TAG: ${AIRFLOW_IMAGE_TAG:-2.11.0}
+      AIRFLOW_IMAGE_TAG: ${AIRFLOW_IMAGE_TAG:-2.11.0-python3.11}
       SPARK_TAG: ${SPARK_TAG:-3.5.8}
   user: "${AIRFLOW_UID:-50000}:0"
   environment: &airflow-common-env

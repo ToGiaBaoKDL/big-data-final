@@ -34,7 +34,6 @@ with DAG(
     params={
         'execution_date': None,       # Override date: YYYY-MM-DD (default: ds/execution_date)
         'trigger_training': False,    # Auto trigger ML training after feature extraction
-        'model_type': 'xgb',          # Model to train if trigger_training=True (xgb, rf, lr)
     },
     doc_md="""
     ## ML Feature Extraction Pipeline
@@ -48,7 +47,6 @@ with DAG(
     **Params:**
     - `execution_date`: Feature snapshot date (default: execution_date/ds)
     - `trigger_training`: Set to true to auto-trigger ML training (default: False)
-    - `model_type`: Model type for training if triggered (xgb, rf, lr)
     
     **Output:** Feature store in dl-datascience bucket
     """,
@@ -69,9 +67,10 @@ with DAG(
 
         spark-submit \\
             --master {SPARK_MASTER} \\
-            --driver-memory 1g \\
-            --executor-memory 1g \\
+            --driver-memory 800m \\
+            --executor-memory 1200m \\
             --conf spark.driver.maxResultSize=512m \\
+            --conf spark.executor.memoryOverhead=300m \\
             --conf spark.sql.shuffle.partitions=20 \\
             --conf spark.default.parallelism=20 \\
             --conf spark.memory.fraction=0.8 \\
@@ -137,8 +136,6 @@ with DAG(
         trigger_dag_id='ml_train_paysim',
         conf={
             'run_date': EXECUTION_DATE_TEMPLATE,
-            'model_type': "{{ dag_run.conf.get('model_type', 'xgb') }}",
-            'use_spark': False,
             'register_model': True,
         },
         wait_for_completion=False,

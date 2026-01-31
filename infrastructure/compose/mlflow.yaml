@@ -6,17 +6,24 @@ services:
       args:
         MLFLOW_PYTHON_TAG: ${MLFLOW_PYTHON_TAG:-3.11-slim}
         MLFLOW_VER: ${MLFLOW_VER:-3.8.1}
-    command: >
-      mlflow server
-      --backend-store-uri postgresql://${MLFLOW_POSTGRES_USER}:${MLFLOW_POSTGRES_PASSWORD}@postgres/${MLFLOW_POSTGRES_DB}
-      --default-artifact-root s3://${MINIO_BUCKET_MLFLOW:-dl-mlflow-7c0d3e}/
-      --host 0.0.0.0
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - postgresql://${MLFLOW_POSTGRES_USER}:${MLFLOW_POSTGRES_PASSWORD}@postgres/${MLFLOW_POSTGRES_DB}
+      - --default-artifact-root
+      - s3://${MINIO_BUCKET_MLFLOW:-dl-mlflow-7c0d3e}/
+      - --host
+      - "0.0.0.0"
+      - --disable-security-middleware
     ports:
       - "5000:5000"
     environment:
       - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - MLFLOW_ALLOW_ORIGINS=*
+      - MLFLOW_ALLOWED_HOSTS=all
     depends_on:
       postgres:
         condition: service_healthy

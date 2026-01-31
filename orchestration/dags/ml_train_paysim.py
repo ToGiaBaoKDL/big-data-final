@@ -21,13 +21,24 @@ from datetime import timedelta
 ML_SCRIPT_PATH = "/opt/airflow/processing/ml"
 SPARK_MASTER = os.getenv("SPARK_MASTER", "spark://spark-master:7077")
 
-# Environment for MLflow
+# Environment for MLflow + AWS (include AWS vars for remote logging)
 MLFLOW_ENV = {
+    # MLflow config
     "MLFLOW_TRACKING_URI": os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-server:5000"),
+    # MinIO/S3 config  
     "AWS_ENDPOINT_URL": os.getenv("AWS_ENDPOINT_URL", "http://minio:9000"),
+    "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", os.getenv("MINIO_ROOT_USER", "minio_admin")),
+    "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", os.getenv("MINIO_ROOT_PASSWORD", "minio_password")),
+    "AWS_REGION_NAME": os.getenv("AWS_REGION_NAME", "us-east-1"),
+    # MinIO legacy vars (for validate_minio.py)
     "MINIO_ROOT_USER": os.getenv("MINIO_ROOT_USER", "minio_admin"),
     "MINIO_ROOT_PASSWORD": os.getenv("MINIO_ROOT_PASSWORD", "minio_password"),
     "MINIO_BUCKET_DATASCIENCE": os.getenv("MINIO_BUCKET_DATASCIENCE", "dl-datascience-gii2ij"),
+    # PySpark Python version alignment (Airflow=3.11, Spark=3.11)
+    "PYSPARK_PYTHON": "python3.11",
+    "PYSPARK_DRIVER_PYTHON": "python3.11",
+    # Silence Git warning in MLflow
+    "GIT_PYTHON_REFRESH": "quiet",
 }
 
 default_args = {
@@ -82,16 +93,41 @@ with DAG(
         bash_command="""
         set -e
         
-        RUN_DATE="{{ params.run_date or 'latest' }}"
+        RUN_DATE="{{ params.run_date or ds }}"
         
-        echo "Validating feature store..."
-        python3 /opt/airflow/plugins/utils/validate_minio.py \
+        echo "Validating Feature Store"
+        echo "Run Date: $RUN_DATE"
+        echo "Bucket: $MINIO_BUCKET_DATASCIENCE"
+        
+        # Check if specific date partition exists
+        if [ -n "$RUN_DATE" ] && [ "$RUN_DATE" != "None" ]; then
+            PREFIX="paysim_features/run_date=$RUN_DATE/"
+            echo "Checking features for date: $RUN_DATE"
+        else
+            PREFIX="paysim_features/"
+            echo "Checking latest features (no date specified)"
+        fi
+        
+        echo "Prefix: $PREFIX"
+        
+        # Use python -u for unbuffered output
+        python3 -u /opt/airflow/plugins/utils/validate_minio.py \
             --bucket $MINIO_BUCKET_DATASCIENCE \
-            --prefix "paysim_features/"
+            --prefix "$PREFIX" \
+            --min-files 1
         
-        echo "Features validated!"
+        VALIDATION_EXIT_CODE=$?
+        
+        if [ $VALIDATION_EXIT_CODE -eq 0 ]; then
+            echo "Features VALIDATED for $RUN_DATE"
+        else
+            echo "ERROR: Features NOT FOUND for $RUN_DATE"
+            echo "Hint: Run ml_extract_feature_paysim DAG first"
+            exit 1
+        fi
         """,
         env=MLFLOW_ENV,
+        append_env=True,  # Preserve Airflow env vars for remote logging
     )
 
     # Train with PySpark ML
@@ -107,9 +143,25 @@ with DAG(
         TUNE="{{{{ params.tune }}}}"
         BUCKET="${{MINIO_BUCKET_DATASCIENCE}}"
         
-        echo "Training: model=$MODEL_TYPE, date=$RUN_DATE, tune=$TUNE, register=$REGISTER"
+        echo "PySpark ML Training"
+        echo "Model Type: $MODEL_TYPE"
+        echo "Run Date: $RUN_DATE"
+        echo "Tune Hyperparameters: $TUNE"
+        echo "Register Model: $REGISTER"
+        echo "Feature Bucket: $BUCKET"
+        
+        # Validate script exists
+        echo "Checking train script..."
+        if [ ! -f {ML_SCRIPT_PATH}/train_spark.py ]; then
+            echo "ERROR: train_spark.py not found at {ML_SCRIPT_PATH}/"
+            echo "Expected path: {ML_SCRIPT_PATH}/train_spark.py"
+            ls -la {ML_SCRIPT_PATH}/ || echo "Directory does not exist"
+            exit 1
+        fi
+        echo "Script found: {ML_SCRIPT_PATH}/train_spark.py"
         
         # Build arguments for train_spark.py
+        echo "Building training arguments..."
         ARGS="--model $MODEL_TYPE --save-model"
         
         if [ -n "$RUN_DATE" ] && [ "$RUN_DATE" != "None" ]; then
@@ -124,10 +176,19 @@ with DAG(
             ARGS="$ARGS --register"
         fi
         
+        echo "Final arguments: $ARGS"
+        echo "Submitting Spark job..."
+        
         spark-submit \\
             --master {SPARK_MASTER} \\
-            --driver-memory 4g \\
-            --executor-memory 4g \\
+            --driver-memory 800m \\
+            --executor-memory 1200m \\
+            --conf spark.executor.memoryOverhead=300m \\
+            --conf spark.sql.shuffle.partitions=20 \\
+            --conf spark.sql.adaptive.enabled=true \\
+            --conf spark.sql.adaptive.coalescePartitions.enabled=true \\
+            --conf spark.pyspark.python=python3 \\
+            --conf spark.pyspark.driver.python=python3 \\
             --packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \\
             --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
             --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
@@ -138,9 +199,17 @@ with DAG(
             --conf spark.eventLog.dir=s3a://${{MINIO_BUCKET_LOGS:-dl-logs-3e91b5}}/spark-events/ \
             {ML_SCRIPT_PATH}/train_spark.py $ARGS
         
-        echo "Training complete!"
+        TRAIN_EXIT_CODE=$?
+
+        if [ $TRAIN_EXIT_CODE -eq 0 ]; then
+            echo "Training completed successfully!"
+        else
+            echo "Training failed with exit code: $TRAIN_EXIT_CODE"
+            exit $TRAIN_EXIT_CODE
+        fi
         """,
         env=MLFLOW_ENV,
+        append_env=True,  # Preserve Airflow env vars for remote logging
     )
 
     # Log to MLflow that training finished
@@ -152,6 +221,7 @@ with DAG(
         echo "Model Registry: $MLFLOW_TRACKING_URI/#/models"
         """,
         env=MLFLOW_ENV,
+        append_env=True,  # Preserve Airflow env vars for remote logging
     )
 
     # DAG flow

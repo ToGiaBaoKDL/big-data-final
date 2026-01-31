@@ -113,7 +113,15 @@ cd big-data-final
 
 # Create environment file from example
 cp infrastructure/.env.example infrastructure/.env
+
+# Install Python dependencies (for local scripts: generator, dbt, loader)
+pip install -e .
+
+# Fix logs permissions for Airflow (UID 50000)
+mkdir -p logs && sudo chown -R 50000:0 logs && chmod -R 775 logs
 ```
+
+> **Note**: `pip install -e .` installs dependencies from `pyproject.toml` in editable mode. This includes: polars, minio, clickhouse-connect, dbt-clickhouse, faker, numpy for running local scripts.
 
 ### 2. Start Infrastructure
 ```bash
@@ -122,7 +130,13 @@ docker compose -f infrastructure/docker-compose.yml up -d
 
 # Check service health (wait 2-3 mins for 'healthy' status)
 docker compose -f infrastructure/docker-compose.yml ps
+
+# Verify Python versions are consistent (should all be 3.11.x)
+docker exec infrastructure-airflow-scheduler-1 python --version
+docker exec infrastructure-spark-worker-1 python3 --version
 ```
+
+> **Note**: All services use **Python 3.11** to ensure compatibility between Airflow (driver) and Spark (workers). If you see version mismatches, rebuild with: `docker compose -f infrastructure/docker-compose.yml up -d --build`
 
 ### 3. Data Initialization
 
