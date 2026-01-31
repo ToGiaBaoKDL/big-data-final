@@ -50,7 +50,6 @@ FEATURE_COLS = [
     "dest_amount_sum_24h",
     "dest_count_past",
     "dest_sum_amount_past",
-    "dest_history_fraud_count",
     
     # Origin window features (velocity)
     "orig_msg_count_1h",
@@ -61,7 +60,6 @@ FEATURE_COLS = [
     "orig_count_past",
     "orig_sum_amount_past",
     "orig_avg_amount_past",
-    "orig_history_fraud_count",
     
     # Pattern features
     "is_round_amount"

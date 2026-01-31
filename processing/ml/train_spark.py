@@ -131,6 +131,7 @@ def build_pipeline(feature_cols, model_type="lr"):
         model = RandomForestClassifier(
             labelCol=TARGET_COL,
             featuresCol="scaled_features",
+            weightCol="weight",
             numTrees=100,
             maxDepth=10,
             seed=RANDOM_SEED
@@ -139,6 +140,7 @@ def build_pipeline(feature_cols, model_type="lr"):
         model = GBTClassifier(
             labelCol=TARGET_COL,
             featuresCol="scaled_features",
+            weightCol="weight",
             maxIter=50,
             maxDepth=5,
             seed=RANDOM_SEED
@@ -207,6 +209,12 @@ def evaluate_model(model, test_df):
     
     precision_normal = metrics.precision(0.0)
     recall_normal = metrics.recall(0.0)
+    f1_normal = metrics.fMeasure(0.0)
+    
+    # Weighted metrics (accounts for class imbalance)
+    f1_weighted = metrics.weightedFMeasure()
+    precision_weighted = metrics.weightedPrecision
+    recall_weighted = metrics.weightedRecall
     
     # Confusion matrix
     predictions.groupBy(TARGET_COL, "prediction").count().show()
@@ -215,11 +223,18 @@ def evaluate_model(model, test_df):
         "auc_roc": auc_roc,
         "auc_pr": auc_pr,
         "accuracy": metrics.accuracy,
+        # Fraud class
         "precision_fraud": precision_fraud,
         "recall_fraud": recall_fraud,
         "f1_fraud": f1_fraud,
+        # Normal class
         "precision_normal": precision_normal,
         "recall_normal": recall_normal,
+        "f1_normal": f1_normal,
+        # Weighted metrics
+        "f1_weighted": f1_weighted,
+        "precision_weighted": precision_weighted,
+        "recall_weighted": recall_weighted,
         "macro_recall": (recall_fraud + recall_normal) / 2
     }
     

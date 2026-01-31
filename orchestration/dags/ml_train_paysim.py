@@ -25,6 +25,7 @@ SPARK_MASTER = os.getenv("SPARK_MASTER", "spark://spark-master:7077")
 MLFLOW_ENV = {
     # MLflow config
     "MLFLOW_TRACKING_URI": os.getenv("MLFLOW_TRACKING_URI", "http://mlflow-server:5000"),
+    "MLFLOW_S3_ENDPOINT_URL": os.getenv("MLFLOW_S3_ENDPOINT_URL", "http://minio:9000"),
     # MinIO/S3 config  
     "AWS_ENDPOINT_URL": os.getenv("AWS_ENDPOINT_URL", "http://minio:9000"),
     "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", os.getenv("MINIO_ROOT_USER", "minio_admin")),
